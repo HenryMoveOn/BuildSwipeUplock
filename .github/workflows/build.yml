@@ -1,0 +1,143 @@
+name: Build SwipeUpLock
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: 安装编译依赖
+        run: brew install ldid dpkg xz
+
+      - name: 安装 Theos（roothide 版）
+        run: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
+
+      - name: 确保 iOS SDK
+        run: |
+          if [ ! -d "$HOME/theos/sdks" ] || [ -z "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ]; then
+            git clone --depth 1 https://github.com/theos/sdks "$HOME/theos/sdks"
+          fi
+
+      - name: 生成工程源码
+        run: |
+          mkdir -p SwipeUpLock
+          cd SwipeUpLock
+
+          cat > Makefile <<'EOF'
+          TARGET := iphone:clang:latest:15.0
+          ARCHS = arm64 arm64e
+          THEOS_PACKAGE_SCHEME = roothide
+          INSTALL_TARGET_PROCESSES = SpringBoard
+
+          include $(THEOS)/makefiles/common.mk
+
+          TWEAK_NAME = SwipeUpLock
+          SwipeUpLock_FILES = Tweak.xm
+          SwipeUpLock_CFLAGS = -fobjc-arc
+          SwipeUpLock_FRAMEWORKS = UIKit Foundation
+
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          EOF
+
+          cat > control <<'EOF'
+          Package: com.example.swipeuplock
+          Name: SwipeUpLock
+          Version: 1.0.0
+          Architecture: iphoneos-arm64e
+          Description: Swipe up on Home Indicator from Home Screen to lock (Home Screen only).
+          Maintainer: user
+          Author: user
+          Section: Tweaks
+          Depends: mobilesubstrate
+          EOF
+
+          cat > SwipeUpLock.plist <<'EOF'
+          { Filter = { Bundles = ( "com.apple.springboard" ); }; }
+          EOF
+
+          cat > Tweak.xm <<'EOF'
+          #import <UIKit/UIKit.h>
+          #import <objc/runtime.h>
+          #import <objc/message.h>
+          #include <string.h>
+
+          static BOOL gOnHome = NO;
+          static BOOL gLocking = NO;
+
+          static void SBFLock(void) {
+              if (gLocking) return;
+              gLocking = YES;
+              Class c = objc_getClass("SBLockScreenManager");
+              if (c) {
+                  id mgr = [c performSelector:@selector(sharedInstance)];
+                  SEL s = NSSelectorFromString(@"lockUIFromSource:withOptions:");
+                  if ([mgr respondsToSelector:s]) {
+                      ((void(*)(id,SEL,int,id))objc_msgSend)(mgr, s, 1, nil);
+                  }
+              }
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+                             dispatch_get_main_queue(), ^{ gLocking = NO; });
+          }
+
+          static void dumpGestureInfo(void) {
+              NSMutableString *out = [NSMutableString string];
+              unsigned int n = 0;
+              Class *cs = objc_copyClassList(&n);
+              for (unsigned int i = 0; i < n; i++) {
+                  const char *cn = class_getName(cs[i]);
+                  if (strstr(cn, "HomeGesture") || strstr(cn, "SwitcherModifier")) {
+                      [out appendFormat:@"\n== %s\n", cn];
+                      unsigned int m = 0;
+                      Method *ms = class_copyMethodList(cs[i], &m);
+                      for (unsigned int j = 0; j < m; j++) {
+                          const char *sn = sel_getName(method_getName(ms[j]));
+                          if (strstr(sn,"esture") || strstr(sn,"End") || strstr(sn,"Begin") ||
+                              strstr(sn,"handle") || strstr(sn,"Destination") || strstr(sn,"final")) {
+                              [out appendFormat:@"  - %s\n", sn];
+                          }
+                      }
+                      free(ms);
+                  }
+              }
+              free(cs);
+              [out writeToFile:@"/var/mobile/swipeuplock_debug.txt" atomically:YES
+                      encoding:NSUTF8StringEncoding error:nil];
+          }
+
+          %hook SBHomeScreenViewController
+          - (void)viewDidAppear:(BOOL)arg1 { %orig; gOnHome = YES; }
+          - (void)viewWillDisappear:(BOOL)arg1 { %orig; gOnHome = NO; }
+          %end
+
+          %hook SBHomeGestureRootSwitcherModifier
+          - (id)handleGestureEndedWithContext:(id)arg1 {
+              if (gOnHome) { SBFLock(); return nil; }
+              return %orig;
+          }
+          %end
+
+          %ctor {
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)),
+                             dispatch_get_main_queue(), ^{ dumpGestureInfo(); });
+          }
+          EOF
+
+          ls -la
+
+      - name: 编译打包
+        run: |
+          cd SwipeUpLock
+          make clean
+          make package FINALPACKAGE=1
+
+      - name: 上传 .deb 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: SwipeUpLock-deb
+          path: SwipeUpLock/packages/*.deb
+          if-no-files-found: error
