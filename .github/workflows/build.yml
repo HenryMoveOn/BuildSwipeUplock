@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,13 +20,16 @@ jobs:
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
 
+      - name: Ensure GNU make
+        run: brew install make || true
+
       - name: Generate tweak project
         run: |
           mkdir -p LockSwipe/LockSwipePrefs/Resources
           mkdir -p LockSwipe/LockSwipePrefs/layout/Library/PreferenceLoader/Preferences
           cd LockSwipe
           cat > Makefile <<'EOF_MAKEFILE'
-          TARGET := iphone:clang:latest:14.0
+          TARGET := iphone:clang:latest:15.0
           ARCHS = arm64e
           THEOS_PACKAGE_SCHEME = roothide
 
@@ -45,7 +48,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.8.0
+          Version: 1.9.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: qweasdhxy
@@ -316,9 +319,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.8.0</string>
+              <string>1.9.0</string>
               <key>CFBundleVersion</key>
-              <string>1.8.0</string>
+              <string>1.9.0</string>
               <key>NSPrincipalClass</key>
               <string>LockSwipePrefsListController</string>
           </dict>
@@ -351,10 +354,18 @@ jobs:
         continue-on-error: true
         run: |
           cd LockSwipe
-          set -o pipefail
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+          MAKE_BIN="$(brew --prefix)/opt/make/bin/gmake"
+          if [ ! -x "$MAKE_BIN" ]; then MAKE_BIN="make"; fi
+          "$MAKE_BIN" package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+          set +e
           echo "=== DEB CONTENTS ===" | tee -a build.log
-          dpkg-deb -c packages/*.deb 2>&1 | tee -a build.log || true
+          DEB="$(pwd)/$(ls packages/*.deb | head -1)"
+          echo "deb: $DEB" | tee -a build.log
+          rm -rf /tmp/debx
+          mkdir -p /tmp/debx
+          ( cd /tmp/debx && ar x "$DEB" ) 2>&1 | tee -a build.log
+          ls -la /tmp/debx 2>&1 | tee -a build.log
+          for f in /tmp/debx/data.tar.*; do tar -tvf "$f" 2>&1 | tee -a build.log; done
           echo "=== END ===" | tee -a build.log
 
       - name: Save build log to ci-log branch
