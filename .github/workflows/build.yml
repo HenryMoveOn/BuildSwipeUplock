@@ -38,6 +38,7 @@ jobs:
           LockSwipe_FILES = Tweak.x
           LockSwipe_CFLAGS = -fobjc-arc -Wno-error
           LockSwipe_FRAMEWORKS = Foundation
+          LockSwipe_LIBRARIES = notify
 
           include $(THEOS_MAKE_PATH)/tweak.mk
           include $(THEOS_MAKE_PATH)/aggregate.mk
@@ -45,7 +46,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.3.0
+          Version: 1.4.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -61,9 +62,10 @@ jobs:
           }
           EOF_PLIST
           cat > Tweak.x <<'EOF_TWEAK'
-          // LockSwipe
           #import <Foundation/Foundation.h>
-          #import <objc/runtime.h>
+          #include <objc/runtime.h>
+          #include <objc/message.h>
+          #include <notify.h>
 
           @interface SBLockScreenManager : NSObject
           + (instancetype)sharedInstance;
@@ -78,52 +80,52 @@ jobs:
           @end
 
           static BOOL gIntercept = NO;
+          static BOOL gEnabled = YES;
+          static BOOL gObserved = NO;
 
-          static BOOL SB_Enabled(void) {
-              @try {
-                  Boolean exists = false;
-                  Boolean v = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.lockswipe.tweak"), &exists);
-                  return exists ? (BOOL)v : YES;
-              } @catch (NSException *e) { return YES; }
+          static void SB_SetupObservers(void) {
+              int token = 0;
+              notify_register_dispatch("com.lockswipe.tweak.enabled", &token, dispatch_get_main_queue(), ^(int t) {
+                  gEnabled = YES;
+              });
+              notify_register_dispatch("com.lockswipe.tweak.disabled", &token, dispatch_get_main_queue(), ^(int t) {
+                  gEnabled = NO;
+              });
           }
 
-          static id SB_SharedInstance(NSString *clsName) {
-              Class cls = NSClassFromString(clsName);
+          static id SB_SharedInstance(const char *clsName) {
+              Class cls = objc_getClass(clsName);
               if (!cls) return nil;
-              return [(id)cls sharedInstance];
+              return ((id (*)(id, SEL))objc_msgSend)(cls, sel_registerName("sharedInstance"));
           }
 
-          static BOOL SB_BoolSend(id obj, NSString *selName) {
+          static BOOL SB_BoolSend(id obj, const char *selName) {
               if (!obj) return NO;
-              SEL sel = NSSelectorFromString(selName);
+              SEL sel = sel_registerName(selName);
               if (![obj respondsToSelector:sel]) return NO;
-              IMP imp = [obj methodForSelector:sel];
-              if (!imp) return NO;
-              return ((BOOL (*)(id, SEL))imp)(obj, sel);
+              return ((BOOL (*)(id, SEL))objc_msgSend)(obj, sel);
           }
 
           static BOOL SB_IsLocked(void) {
-              @try {
-                  return SB_BoolSend(SB_SharedInstance(@"SBLockScreenManager"), @"isUILocked");
-              } @catch (NSException *e) { return NO; }
+              return SB_BoolSend(SB_SharedInstance("SBLockScreenManager"), "isUILocked");
           }
 
           static BOOL SB_IsHomeScreenActive(void) {
-              @try {
-                  return SB_BoolSend(SB_SharedInstance(@"SBMainWorkspace"), @"isSpringBoardActive");
-              } @catch (NSException *e) { return NO; }
+              return SB_BoolSend(SB_SharedInstance("SBMainWorkspace"), "isSpringBoardActive");
           }
 
           static void SB_Lock(void) {
-              @try {
-                  SBLockScreenManager *m = (SBLockScreenManager *)SB_SharedInstance(@"SBLockScreenManager");
-                  if (!m) return;
-                  if ([m respondsToSelector:@selector(lockUIFromSource:withOptions:)]) {
-                      [m lockUIFromSource:1 withOptions:nil];
-                  } else if ([m respondsToSelector:@selector(lockUI)]) {
-                      [m lockUI];
+              id m = SB_SharedInstance("SBLockScreenManager");
+              if (!m) return;
+              SEL s = sel_registerName("lockUIFromSource:withOptions:");
+              if ([m respondsToSelector:s]) {
+                  ((void (*)(id, SEL, int, id))objc_msgSend)(m, s, 1, NULL);
+              } else {
+                  SEL s2 = sel_registerName("lockUI");
+                  if ([m respondsToSelector:s2]) {
+                      ((void (*)(id, SEL))objc_msgSend)(m, s2);
                   }
-              } @catch (NSException *e) { }
+              }
           }
 
           %hook SBFluidSwitcherGestureManager
@@ -131,7 +133,11 @@ jobs:
           - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
               %orig;
               @try {
-                  gIntercept = (SB_Enabled() && (SB_IsHomeScreenActive() || SB_IsLocked()));
+                  if (!gObserved) {
+                      gObserved = YES;
+                      SB_SetupObservers();
+                  }
+                  gIntercept = (gEnabled && (SB_IsHomeScreenActive() || SB_IsLocked()));
               } @catch (NSException *e) { gIntercept = NO; }
           }
 
@@ -158,12 +164,15 @@ jobs:
           LockSwipePrefs_INSTALL_PATH = /Library/PreferenceBundles
           LockSwipePrefs_FRAMEWORKS = UIKit
           LockSwipePrefs_PRIVATE_FRAMEWORKS = Preferences
+          LockSwipePrefs_LIBRARIES = notify
 
           include $(THEOS)/makefiles/common.mk
           include $(THEOS_MAKE_PATH)/bundle.mk
           EOF_PREFMAKE
           cat > LockSwipePrefs/LockSwipePrefs.m <<'EOF_PREFM'
           #import <Preferences/PSListController.h>
+          #import <Preferences/PSSpecifier.h>
+          #include <notify.h>
 
           @interface LockSwipePrefsListController : PSListController
           @end
@@ -175,6 +184,24 @@ jobs:
                   _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
               }
               return _specifiers;
+          }
+
+          - (void)notifyState:(BOOL)on {
+              notify_post(on ? "com.lockswipe.tweak.enabled" : "com.lockswipe.tweak.disabled");
+          }
+
+          - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
+              [super setPreferenceValue:value specifier:specifier];
+              [self notifyState:[value boolValue]];
+          }
+
+          - (void)viewDidAppear:(BOOL)animated {
+              [super viewDidAppear:animated];
+              PSSpecifier *spec = [self specifierForID:@"enabled"];
+              if (spec) {
+                  id v = [self readPreferenceValue:spec];
+                  [self notifyState:v ? [v boolValue] : YES];
+              }
           }
 
           @end
@@ -195,6 +222,8 @@ jobs:
                       <true/>
                       <key>defaults</key>
                       <string>com.lockswipe.tweak</string>
+                      <key>id</key>
+                      <string>enabled</string>
                       <key>key</key>
                       <string>enabled</string>
                       <key>label</key>
@@ -212,8 +241,8 @@ jobs:
               CFBundleInfoDictionaryVersion = "6.0";
               CFBundleName = "LockSwipePrefs";
               CFBundlePackageType = "BNDL";
-              CFBundleShortVersionString = "1.3.0";
-              CFBundleVersion = "1.3.0";
+              CFBundleShortVersionString = "1.4.0";
+              CFBundleVersion = "1.4.0";
               NSPrincipalClass = "LockSwipePrefsListController";
           }
           EOF_INFO
@@ -243,12 +272,12 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          cp LockSwipe/build.log build-log.txt
+          cp LockSwipe/build.log build-log.txt || true
           git config user.name "ci-bot"
           git config user.email "ci-bot@users.noreply.github.com"
-          git add -f build-log.txt
+          git add -f build-log.txt || true
           git commit -m "ci: build log [skip ci]" || true
-          git push || true
+          git push origin HEAD:main || true
 
       - name: Upload deb
         if: steps.build.outcome == 'success'
