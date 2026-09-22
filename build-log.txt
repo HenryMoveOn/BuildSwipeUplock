@@ -2,42 +2,9 @@
 [0;31m==> [1;39mPreprocessing Tweak.x…[m
 [0;32m==> [1;39mCompiling Tweak.x (arm64e)…[m
 [0;33m==> [1;39mLinking tweak LockSwipe (arm64e)…[m
-ld: warning: object file /home/runner/work/BuildSwipeUplock/BuildSwipeUplock/LockSwipe/.theos/obj/arm64e/Tweak.x.c0b71e3d.o was built with an incompatible arm64e ABI compiler
-[0;34m==> [1;39mGenerating debug symbols for LockSwipe…[m
-[0;34m==> [1;39mStripping LockSwipe (arm64e)…[m
-[0;34m==> [1;39mSigning LockSwipe…[m
-[1;31m> [1;3;39mMaking all in LockSwipePrefs…[m
-[1;31m> [1;3;39mMaking all for bundle LockSwipePrefs…[m
-[0;35m==> [1;39mCopying resource directories into the bundle wrapper…[m
-[0;32m==> [1;39mCompiling LockSwipePrefs.m (arm64e)…[m
-[0;32m==> [1;39mCompiling LockSwipePrefs.m (arm64)…[m
-[0;33m==> [1;39mLinking bundle LockSwipePrefs (arm64e)…[m
-ld: warning: object file /home/runner/work/BuildSwipeUplock/BuildSwipeUplock/LockSwipe/.theos/obj/arm64e/LockSwipePrefs.m.0c8a2e46.o was built with an incompatible arm64e ABI compiler
-[0;34m==> [1;39mGenerating debug symbols for LockSwipePrefs…[m
-[0;34m==> [1;39mStripping LockSwipePrefs (arm64e)…[m
-[0;33m==> [1;39mLinking bundle LockSwipePrefs (arm64)…[m
-[0;34m==> [1;39mGenerating debug symbols for LockSwipePrefs…[m
-[0;34m==> [1;39mStripping LockSwipePrefs (arm64)…[m
-[0;34m==> [1;39mMerging bundle LockSwipePrefs…[m
-[0;34m==> [1;39mSigning LockSwipePrefs…[m
-[1;31m> [1;3;39mMaking stage for tweak LockSwipe…[m
-[1;31m> [1;3;39mMaking stage in LockSwipePrefs…[m
-[1;31m> [1;3;39mMaking stage for bundle LockSwipePrefs…[m
-[0;36m==> [1;36mNotice:[m Neither plutil, ply, or libplist-utils are installed, so XML plist files were not optimized.
-dm.pl: building package `com.lockswipe.tweak:iphoneos-arm64e' in `./packages/com.lockswipe.tweak_1.3.0_iphoneos-arm64e.deb'
-=== DEB CONTENTS ===
-drwxr-xr-x 0/root            0 2026-09-22 07:48 .
-drwxr-xr-x 0/root            0 2026-09-22 07:48 Library
-drwxr-xr-x 0/root            0 2026-09-22 07:48 Library/MobileSubstrate
-drwxr-xr-x 0/root            0 2026-09-22 07:48 Library/MobileSubstrate/DynamicLibraries
--rwxr-xr-x 0/root        67840 2026-09-22 07:48 Library/MobileSubstrate/DynamicLibraries/LockSwipe.dylib
--rw-r--r-- 0/root           73 2026-09-22 07:48 Library/MobileSubstrate/DynamicLibraries/LockSwipe.plist
-drwxr-xr-x 0/root            0 2026-09-22 07:48 Library/PreferenceBundles
-drwxr-xr-x 0/root            0 2026-09-22 07:48 Library/PreferenceBundles/LockSwipePrefs.bundle
--rw-r--r-- 0/root          375 2026-09-22 07:48 Library/PreferenceBundles/LockSwipePrefs.bundle/Info.plist
--rwxr-xr-x 0/root       165696 2026-09-22 07:48 Library/PreferenceBundles/LockSwipePrefs.bundle/LockSwipePrefs
--rw-r--r-- 0/root          648 2026-09-22 07:48 Library/PreferenceBundles/LockSwipePrefs.bundle/Root.plist
-drwxr-xr-x 0/root            0 2026-09-22 07:48 Library/PreferenceLoader
-drwxr-xr-x 0/root            0 2026-09-22 07:48 Library/PreferenceLoader/Preferences
--rw-r--r-- 0/root          165 2026-09-22 07:48 Library/PreferenceLoader/Preferences/LockSwipePrefs.plist
-=== END ===
+ld: library not found for -lnotify
+clang-11: [0;1;31merror: [0mlinker command failed with exit code 1 (use -v to see invocation)[0m
+make[3]: *** [/home/runner/theos/makefiles/instance/library.mk:52: /home/runner/work/BuildSwipeUplock/BuildSwipeUplock/LockSwipe/.theos/obj/arm64e/LockSwipe.dylib] Error 1
+make[2]: *** [/home/runner/theos/makefiles/instance/library.mk:52: /home/runner/work/BuildSwipeUplock/BuildSwipeUplock/LockSwipe/.theos/obj/arm64e/LockSwipe.dylib] Error 2
+make[1]: *** [/home/runner/theos/makefiles/instance/library.mk:37: internal-library-all_] Error 2
+make: *** [/home/runner/theos/makefiles/master/rules.mk:146: LockSwipe.all.tweak.variables] Error 2
