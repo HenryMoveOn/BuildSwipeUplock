@@ -19,10 +19,6 @@ jobs:
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
-          echo "--- theos sdks ---"
-          ls "$HOME/theos/sdks" || true
-          echo "--- clang ---"
-          "$HOME/theos/toolchain/linux/iphone/bin/clang" --version || true
 
       - name: Generate tweak project
         run: |
@@ -37,15 +33,15 @@ jobs:
 
           TWEAK_NAME = LockSwipe
           LockSwipe_FILES = Tweak.x
-          LockSwipe_CFLAGS = -fobjc-arc
-          LockSwipe_FRAMEWORKS = UIKit Foundation
+          LockSwipe_CFLAGS = -fobjc-arc -Wno-error
+          LockSwipe_FRAMEWORKS = Foundation
 
           include $(THEOS_MAKE_PATH)/tweak.mk
           EOF_MAKEFILE
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.0.1
+          Version: 1.0.2
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -64,6 +60,7 @@ jobs:
           // LockSwipe - Home Screen / Lock Screen: swipe up on home bar => lock.
           #import <Foundation/Foundation.h>
           #import <objc/runtime.h>
+          #import <objc/message.h>
 
           @interface SBLockScreenManager : NSObject
           + (instancetype)sharedInstance;
@@ -98,10 +95,8 @@ jobs:
           static void SB_Lock(void) {
               SBLockScreenManager *m = (SBLockScreenManager *)SB_SharedInstance(@"SBLockScreenManager");
               if (!m) return;
-              SEL s = NSSelectorFromString(@"lockUIFromSource:withOptions:");
-              if ([m respondsToSelector:s]) {
-                  void (*fn)(id, SEL, int, id) = (void (*)(id, SEL, int, id))objc_msgSend;
-                  fn(m, s, 1, nil);
+              if ([m respondsToSelector:@selector(lockUIFromSource:withOptions:)]) {
+                  [m lockUIFromSource:1 withOptions:nil];
                   NSLog(@"[LockSwipe] locked via lockUIFromSource");
               } else if ([m respondsToSelector:@selector(lockUI)]) {
                   [m lockUI];
