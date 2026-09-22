@@ -69,7 +69,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.9.1
+          Version: 1.9.2
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: qweasdhxy
@@ -169,53 +169,7 @@ jobs:
               IOHIDEventSystemClientRef client = sCreate(kCFAllocatorDefault);
               if (!client) return NO;
               uint64_t ts = mach_absolute_time();
-              IOHIDEventRef down = sKeyEvent(kCFAllocatorDefault, ts, 0x0C, 0x30, true);
-              IOHIDEventRef up = sKeyEvent(kCFAllocatorDefault, ts, 0x0C, 0x30, false);
-              if (!down || !up) {
-                  if (down) CFRelease(down);
-                  if (up) CFRelease(up);
-                  return NO;
-              }
-              sDispatch(client, down);
-              usleep(30000);
-              sDispatch(client, up);
-              CFRelease(down);
-              CFRelease(up);
-              return YES;
-          }
-
-          static void SB_SoftwareLock(void) {
-              id m = SB_SharedInstance("SBLockScreenManager");
-              if (m) {
-                  SEL s = sel_registerName("lockUIFromSource:withOptions:");
-                  if ([m respondsToSelector:s]) {
-                      ((void (*)(id, SEL, int, id))objc_msgSend)(m, s, 1, NULL);
-                  } else {
-                      SEL s2 = sel_registerName("lockUI");
-                      if ([m respondsToSelector:s2]) {
-                          ((void (*)(id, SEL))objc_msgSend)(m, s2);
-                      }
-                  }
-              }
-              id bl = SB_SharedInstance("SBBacklightController");
-              if (bl) {
-                  SEL s1 = sel_registerName("_startFadeOutAnimationFromLockSource:");
-                  if ([bl respondsToSelector:s1]) {
-                      ((void (*)(id, SEL, int))objc_msgSend)(bl, s1, 3);
-                  }
-              }
-          }
-
-          static void SB_Lock(void) {
-              SB_PressPowerButton();
-              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                  if (!SB_IsLocked()) {
-                      SB_SoftwareLock();
-                  }
-              });
-          }
-
-          %hook SBFluidSwitcherGestureManager
+              IOHIDEventidSwitcherGestureManager
 
           - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
               %orig;
@@ -248,6 +202,7 @@ jobs:
           BUNDLE_NAME = LockSwipePrefs
 
           LockSwipePrefs_FILES = LockSwipePrefs.m
+          LockSwipePrefs_CFLAGS = -fobjc-arc -Wno-error
           LockSwipePrefs_INSTALL_PATH = /Library/PreferenceBundles
           LockSwipePrefs_FRAMEWORKS = UIKit
           LockSwipePrefs_PRIVATE_FRAMEWORKS = Preferences
@@ -340,9 +295,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.9.1</string>
+              <string>1.9.2</string>
               <key>CFBundleVersion</key>
-              <string>1.9.1</string>
+              <string>1.9.2</string>
               <key>NSPrincipalClass</key>
               <string>LockSwipePrefsListController</string>
           </dict>
