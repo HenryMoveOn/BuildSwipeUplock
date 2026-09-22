@@ -37,7 +37,7 @@ jobs:
           TWEAK_NAME = LockSwipe
           LockSwipe_FILES = Tweak.x
           LockSwipe_CFLAGS = -fobjc-arc -Wno-error
-          LockSwipe_FRAMEWORKS = Foundation
+          LockSwipe_FRAMEWORKS = Foundation IOKit
 
           include $(THEOS_MAKE_PATH)/tweak.mk
           include $(THEOS_MAKE_PATH)/aggregate.mk
@@ -45,7 +45,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.6.0
+          Version: 1.7.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -65,6 +65,9 @@ jobs:
           #include <objc/runtime.h>
           #include <objc/message.h>
           #include <CoreFoundation/CoreFoundation.h>
+          #include <dlfcn.h>
+          #include <unistd.h>
+          #include <mach/mach_time.h>
 
           @interface SBLockScreenManager : NSObject
           + (instancetype)sharedInstance;
@@ -77,6 +80,12 @@ jobs:
           + (instancetype)sharedInstance;
           - (BOOL)isSpringBoardActive;
           @end
+
+          typedef struct __IOHIDEvent *IOHIDEventRef;
+          typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
+          typedef IOHIDEventRef (*SB_HIDKeyEventFn)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, Boolean);
+          typedef IOHIDEventSystemClientRef (*SB_HIDClientCreateFn)(CFAllocatorRef);
+          typedef void (*SB_HIDClientDispatchFn)(IOHIDEventSystemClientRef, IOHIDEventRef);
 
           static BOOL gIntercept = NO;
           static BOOL gEnabled = YES;
@@ -118,21 +127,40 @@ jobs:
               return SB_BoolSend(SB_SharedInstance("SBMainWorkspace"), "isSpringBoardActive");
           }
 
-          static void SB_TurnScreenOff(void) {
-              id bl = SB_SharedInstance("SBBacklightController");
-              if (!bl) return;
-              SEL s1 = sel_registerName("_startFadeOutAnimationFromLockSource:");
-              if ([bl respondsToSelector:s1]) {
-                  ((void (*)(id, SEL, int))objc_msgSend)(bl, s1, 3);
-                  return;
+          static BOOL SB_PressPowerButton(void) {
+              static SB_HIDKeyEventFn sKeyEvent = NULL;
+              static SB_HIDClientCreateFn sCreate = NULL;
+              static SB_HIDClientDispatchFn sDispatch = NULL;
+              static BOOL sInited = NO;
+              if (!sInited) {
+                  sInited = YES;
+                  void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+                  if (h) {
+                      sKeyEvent = (SB_HIDKeyEventFn)dlsym(h, "IOHIDEventCreateKeyboardEvent");
+                      sCreate = (SB_HIDClientCreateFn)dlsym(h, "IOHIDEventSystemClientCreate");
+                      sDispatch = (SB_HIDClientDispatchFn)dlsym(h, "IOHIDEventSystemClientDispatchEvent");
+                  }
               }
-              SEL s2 = sel_registerName("setBacklightState:source:");
-              if ([bl respondsToSelector:s2]) {
-                  ((void (*)(id, SEL, int, int))objc_msgSend)(bl, s2, 0, 667);
+              if (!sKeyEvent || !sCreate || !sDispatch) return NO;
+              IOHIDEventSystemClientRef client = sCreate(kCFAllocatorDefault);
+              if (!client) return NO;
+              uint64_t ts = mach_absolute_time();
+              IOHIDEventRef down = sKeyEvent(kCFAllocatorDefault, ts, 0x0C, 0x30, true);
+              IOHIDEventRef up = sKeyEvent(kCFAllocatorDefault, ts, 0x0C, 0x30, false);
+              if (!down || !up) {
+                  if (down) CFRelease(down);
+                  if (up) CFRelease(up);
+                  return NO;
               }
+              sDispatch(client, down);
+              usleep(30000);
+              sDispatch(client, up);
+              CFRelease(down);
+              CFRelease(up);
+              return YES;
           }
 
-          static void SB_Lock(void) {
+          static void SB_SoftwareLock(void) {
               id m = SB_SharedInstance("SBLockScreenManager");
               if (m) {
                   SEL s = sel_registerName("lockUIFromSource:withOptions:");
@@ -145,7 +173,22 @@ jobs:
                       }
                   }
               }
-              SB_TurnScreenOff();
+              id bl = SB_SharedInstance("SBBacklightController");
+              if (bl) {
+                  SEL s1 = sel_registerName("_startFadeOutAnimationFromLockSource:");
+                  if ([bl respondsToSelector:s1]) {
+                      ((void (*)(id, SEL, int))objc_msgSend)(bl, s1, 3);
+                  }
+              }
+          }
+
+          static void SB_Lock(void) {
+              SB_PressPowerButton();
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                  if (!SB_IsLocked()) {
+                      SB_SoftwareLock();
+                  }
+              });
           }
 
           %hook SBFluidSwitcherGestureManager
@@ -263,8 +306,8 @@ jobs:
               CFBundleInfoDictionaryVersion = "6.0";
               CFBundleName = "LockSwipePrefs";
               CFBundlePackageType = "BNDL";
-              CFBundleShortVersionString = "1.6.0";
-              CFBundleVersion = "1.6.0";
+              CFBundleShortVersionString = "1.7.0";
+              CFBundleVersion = "1.7.0";
               NSPrincipalClass = "LockSwipePrefsListController";
           }
           EOF_INFO
