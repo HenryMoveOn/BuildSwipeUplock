@@ -15,15 +15,31 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Theos (roothide)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
+          set +e
+          LOG="$GITHUB_WORKSPACE/install.log"
+          : > "$LOG"
+          echo "### attempt: install-theos (authenticated)" >> "$LOG"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)" >> "$LOG" 2>&1
+          rc=$?
+          echo "install-theos rc=$rc" >> "$LOG"
+          if [ "$rc" -ne 0 ] || [ ! -d "$HOME/theos/sdks" ] || [ -z "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ]; then
+            echo "### fallback: manual setup" >> "$LOG"
+            brew install ldid xz >> "$LOG" 2>&1
+            [ -d "$HOME/theos" ] || git clone --recursive --depth 1 https://github.com/roothide/theos.git "$HOME/theos" >> "$LOG" 2>&1
+            rm -rf "$HOME/theos/sdks"
+            mkdir -p "$HOME/theos/sdks"
+            "$HOME/theos/bin/install-sdk" latest >> "$LOG" 2>&1
+          fi
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
-
-      - name: Ensure iOS 16.5 SDK
-        run: |
-          "$THEOS/bin/install-sdk" latest || true
-          ls -la "$THEOS/sdks"
+          if [ ! -d "$HOME/theos/sdks" ] || [ -z "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ]; then
+            echo "INSTALL FAILED" >> "$LOG"
+            exit 1
+          fi
+          ls -la "$HOME/theos/sdks"
 
       - name: Ensure GNU make
         run: brew install make || true
@@ -380,9 +396,13 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          mkdir -p LockSwipe
-          if [ ! -f LockSwipe/build.log ]; then echo "no build.log produced" > LockSwipe/build.log; fi
-          cp LockSwipe/build.log build-log.txt
+          {
+            echo "===== INSTALL LOG ====="
+            cat install.log 2>/dev/null || echo "(no install.log)"
+            echo
+            echo "===== BUILD LOG ====="
+            cat LockSwipe/build.log 2>/dev/null || echo "(no build.log)"
+          } > build-log.txt
           git config user.name "ci-bot"
           git config user.email "ci-bot@users.noreply.github.com"
           git checkout -B ci-log
