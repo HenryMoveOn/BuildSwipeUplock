@@ -22,7 +22,8 @@ jobs:
 
       - name: Generate tweak project
         run: |
-          mkdir -p LockSwipe
+          mkdir -p LockSwipe/LockSwipePrefs/Resources
+          mkdir -p LockSwipe/LockSwipePrefs/layout/Library/PreferenceLoader/Preferences
           cd LockSwipe
           cat > Makefile <<'EOF_MAKEFILE'
           TARGET := iphone:clang:latest:14.0
@@ -31,17 +32,20 @@ jobs:
 
           include $(THEOS)/makefiles/common.mk
 
+          SUBPROJECTS += LockSwipePrefs
+
           TWEAK_NAME = LockSwipe
           LockSwipe_FILES = Tweak.x
           LockSwipe_CFLAGS = -fobjc-arc -Wno-error
           LockSwipe_FRAMEWORKS = Foundation
 
           include $(THEOS_MAKE_PATH)/tweak.mk
+          include $(THEOS_MAKE_PATH)/aggregate.mk
           EOF_MAKEFILE
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.0.2
+          Version: 1.1.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -57,10 +61,9 @@ jobs:
           }
           EOF_PLIST
           cat > Tweak.x <<'EOF_TWEAK'
-          // LockSwipe - Home Screen / Lock Screen: swipe up on home bar => lock.
+          // LockSwipe
           #import <Foundation/Foundation.h>
           #import <objc/runtime.h>
-          #import <objc/message.h>
 
           @interface SBLockScreenManager : NSObject
           + (instancetype)sharedInstance;
@@ -74,64 +77,156 @@ jobs:
           - (BOOL)isSpringBoardActive;
           @end
 
+          static BOOL gIntercept = NO;
+
           static id SB_SharedInstance(NSString *clsName) {
               Class cls = NSClassFromString(clsName);
               if (!cls) return nil;
               return [(id)cls sharedInstance];
           }
 
+          static BOOL SB_BoolSend(id obj, NSString *selName) {
+              if (!obj) return NO;
+              SEL sel = NSSelectorFromString(selName);
+              if (![obj respondsToSelector:sel]) return NO;
+              IMP imp = [obj methodForSelector:sel];
+              if (!imp) return NO;
+              return ((BOOL (*)(id, SEL))imp)(obj, sel);
+          }
+
+          static BOOL SB_Enabled(void) {
+              @try {
+                  NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.lockswipe.tweak.plist"];
+                  if (d && d[@"enabled"] != nil) return [d[@"enabled"] boolValue];
+              } @catch (NSException *e) { }
+              return YES;
+          }
+
           static BOOL SB_IsLocked(void) {
-              SBLockScreenManager *m = (SBLockScreenManager *)SB_SharedInstance(@"SBLockScreenManager");
-              if (!m) return NO;
-              return [m isUILocked];
+              @try {
+                  return SB_BoolSend(SB_SharedInstance(@"SBLockScreenManager"), @"isUILocked");
+              } @catch (NSException *e) { return NO; }
           }
 
           static BOOL SB_IsHomeScreenActive(void) {
-              SBMainWorkspace *w = (SBMainWorkspace *)SB_SharedInstance(@"SBMainWorkspace");
-              if (!w) return NO;
-              return [w isSpringBoardActive];
+              @try {
+                  return SB_BoolSend(SB_SharedInstance(@"SBMainWorkspace"), @"isSpringBoardActive");
+              } @catch (NSException *e) { return NO; }
           }
 
           static void SB_Lock(void) {
-              SBLockScreenManager *m = (SBLockScreenManager *)SB_SharedInstance(@"SBLockScreenManager");
-              if (!m) return;
-              if ([m respondsToSelector:@selector(lockUIFromSource:withOptions:)]) {
-                  [m lockUIFromSource:1 withOptions:nil];
-                  NSLog(@"[LockSwipe] locked via lockUIFromSource");
-              } else if ([m respondsToSelector:@selector(lockUI)]) {
-                  [m lockUI];
-                  NSLog(@"[LockSwipe] locked via lockUI");
-              } else {
-                  NSLog(@"[LockSwipe] no lock method available");
-              }
+              @try {
+                  SBLockScreenManager *m = (SBLockScreenManager *)SB_SharedInstance(@"SBLockScreenManager");
+                  if (!m) return;
+                  if ([m respondsToSelector:@selector(lockUIFromSource:withOptions:)]) {
+                      [m lockUIFromSource:1 withOptions:nil];
+                  } else if ([m respondsToSelector:@selector(lockUI)]) {
+                      [m lockUI];
+                  }
+              } @catch (NSException *e) { }
           }
-
-          static BOOL gIntercept = NO;
 
           %hook SBFluidSwitcherGestureManager
 
           - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
-              gIntercept = (SB_IsHomeScreenActive() || SB_IsLocked());
-              NSLog(@"[LockSwipe] begin intercept=%d", (int)gIntercept);
               %orig;
+              @try {
+                  gIntercept = (SB_Enabled() && (SB_IsHomeScreenActive() || SB_IsLocked()));
+              } @catch (NSException *e) { gIntercept = NO; }
           }
 
           - (void)fluidSwitcherGestureTransaction:(id)t didUpdateGesture:(id)g {
-              if (gIntercept) return;
               %orig;
           }
 
           - (void)fluidSwitcherGestureTransaction:(id)t didEndGesture:(id)g {
+              %orig;
               if (gIntercept) {
                   gIntercept = NO;
-                  SB_Lock();
-                  return;
+                  dispatch_async(dispatch_get_main_queue(), ^{
+                      @try { SB_Lock(); } @catch (NSException *e) { }
+                  });
               }
-              %orig;
           }
 
           %end
           EOF_TWEAK
+          cat > LockSwipePrefs/Makefile <<'EOF_PREFMAKE'
+          BUNDLE_NAME = LockSwipePrefs
+
+          LockSwipePrefs_FILES = LockSwipePrefs.m
+          LockSwipePrefs_INSTALL_PATH = /Library/PreferenceBundles
+          LockSwipePrefs_FRAMEWORKS = UIKit
+          LockSwipePrefs_PRIVATE_FRAMEWORKS = Preferences
+
+          include $(THEOS)/makefiles/common.mk
+          include $(THEOS_MAKE_PATH)/bundle.mk
+          EOF_PREFMAKE
+          cat > LockSwipePrefs/LockSwipePrefs.m <<'EOF_PREFM'
+          #import <Preferences/PSListController.h>
+
+          @interface LockSwipePrefsListController : PSListController
+          @end
+
+          @implementation LockSwipePrefsListController
+
+          - (NSArray *)specifiers {
+              if (!_specifiers) {
+                  _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+              }
+              return _specifiers;
+          }
+
+          @end
+          EOF_PREFM
+          cat > LockSwipePrefs/Resources/Root.plist <<'EOF_ROOT'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>title</key>
+              <string>LockSwipe</string>
+              <key>items</key>
+              <array>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>default</key>
+                      <true/>
+                      <key>defaults</key>
+                      <string>com.lockswipe.tweak</string>
+                      <key>key</key>
+                      <string>enabled</string>
+                      <key>label</key>
+                      <string>启用</string>
+                  </dict>
+              </array>
+          </dict>
+          </plist>
+          EOF_ROOT
+          cat > LockSwipePrefs/Resources/Info.plist <<'EOF_INFO'
+          {
+              CFBundleDevelopmentRegion = "en";
+              CFBundleExecutable = "LockSwipePrefs";
+              CFBundleIdentifier = "com.lockswipe.prefs";
+              CFBundleInfoDictionaryVersion = "6.0";
+              CFBundleName = "LockSwipePrefs";
+              CFBundlePackageType = "BNDL";
+              CFBundleShortVersionString = "1.1.0";
+              CFBundleVersion = "1.1.0";
+              NSPrincipalClass = "LockSwipePrefsListController";
+          }
+          EOF_INFO
+          cat > LockSwipePrefs/layout/Library/PreferenceLoader/Preferences/LockSwipePrefs.plist <<'EOF_ENTRY'
+          {
+              entry = {
+                  bundle = "LockSwipePrefs";
+                  cell = PSLinkCell;
+                  detail = "LockSwipePrefsListController";
+                  label = "LockSwipe";
+              };
+          }
+          EOF_ENTRY
 
       - name: Build deb
         id: build
