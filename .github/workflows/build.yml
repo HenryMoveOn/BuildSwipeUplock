@@ -45,7 +45,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.1.0
+          Version: 1.2.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -78,6 +78,15 @@ jobs:
           @end
 
           static BOOL gIntercept = NO;
+          static BOOL gEnabled = YES;
+
+          static void SB_RefreshEnabled(void) {
+              @try {
+                  Boolean exists = false;
+                  Boolean v = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.lockswipe.tweak"), &exists);
+                  gEnabled = exists ? (BOOL)v : YES;
+              } @catch (NSException *e) { }
+          }
 
           static id SB_SharedInstance(NSString *clsName) {
               Class cls = NSClassFromString(clsName);
@@ -92,14 +101,6 @@ jobs:
               IMP imp = [obj methodForSelector:sel];
               if (!imp) return NO;
               return ((BOOL (*)(id, SEL))imp)(obj, sel);
-          }
-
-          static BOOL SB_Enabled(void) {
-              @try {
-                  NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.lockswipe.tweak.plist"];
-                  if (d && d[@"enabled"] != nil) return [d[@"enabled"] boolValue];
-              } @catch (NSException *e) { }
-              return YES;
           }
 
           static BOOL SB_IsLocked(void) {
@@ -131,7 +132,7 @@ jobs:
           - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
               %orig;
               @try {
-                  gIntercept = (SB_Enabled() && (SB_IsHomeScreenActive() || SB_IsLocked()));
+                  gIntercept = (gEnabled && (SB_IsHomeScreenActive() || SB_IsLocked()));
               } @catch (NSException *e) { gIntercept = NO; }
           }
 
@@ -150,6 +151,16 @@ jobs:
           }
 
           %end
+
+          %ctor {
+              SB_RefreshEnabled();
+              dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+                  while (YES) {
+                      [NSThread sleepForTimeInterval:2.0];
+                      SB_RefreshEnabled();
+                  }
+              });
+          }
           EOF_TWEAK
           cat > LockSwipePrefs/Makefile <<'EOF_PREFMAKE'
           BUNDLE_NAME = LockSwipePrefs
@@ -212,8 +223,8 @@ jobs:
               CFBundleInfoDictionaryVersion = "6.0";
               CFBundleName = "LockSwipePrefs";
               CFBundlePackageType = "BNDL";
-              CFBundleShortVersionString = "1.1.0";
-              CFBundleVersion = "1.1.0";
+              CFBundleShortVersionString = "1.2.0";
+              CFBundleVersion = "1.2.0";
               NSPrincipalClass = "LockSwipePrefsListController";
           }
           EOF_INFO
@@ -235,9 +246,12 @@ jobs:
           cd LockSwipe
           set -o pipefail
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+          echo "=== DEB CONTENTS ===" | tee -a build.log
+          dpkg-deb -c packages/*.deb 2>&1 | tee -a build.log || true
+          echo "=== END ===" | tee -a build.log
 
-      - name: Save build log to repo (on failure)
-        if: steps.build.outcome == 'failure'
+      - name: Save build log to repo
+        if: always()
         continue-on-error: true
         run: |
           cp LockSwipe/build.log build-log.txt
