@@ -20,270 +20,273 @@ jobs:
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
 
-      - name: Build
+      - name: Generate tweak project
+        run: |
+          mkdir -p LockSwipe/LockSwipePrefs/Resources
+          mkdir -p LockSwipe/LockSwipePrefs/layout/Library/PreferenceLoader/Preferences
+          cd LockSwipe
+          cat > Makefile <<'EOF_MAKEFILE'
+          TARGET := iphone:clang:latest:14.0
+          ARCHS = arm64e
+          THEOS_PACKAGE_SCHEME = roothide
+
+          include $(THEOS)/makefiles/common.mk
+
+          SUBPROJECTS += LockSwipePrefs
+
+          TWEAK_NAME = LockSwipe
+          LockSwipe_FILES = Tweak.x
+          LockSwipe_CFLAGS = -fobjc-arc -Wno-error
+          LockSwipe_FRAMEWORKS = Foundation
+
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          include $(THEOS_MAKE_PATH)/aggregate.mk
+          EOF_MAKEFILE
+          cat > control <<'EOF_CONTROL'
+          Package: com.lockswipe.tweak
+          Name: LockSwipe
+          Version: 1.5.0
+          Architecture: iphoneos-arm64e
+          Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
+          Maintainer: LockSwipe
+          Author: LockSwipe
+          Section: Tweaks
+          Depends: mobilesubstrate
+          EOF_CONTROL
+          cat > LockSwipe.plist <<'EOF_PLIST'
+          {
+              Filter = {
+                  Bundles = ( "com.apple.springboard" );
+              };
+          }
+          EOF_PLIST
+          cat > Tweak.x <<'EOF_TWEAK'
+          #import <Foundation/Foundation.h>
+          #include <objc/runtime.h>
+          #include <objc/message.h>
+          #include <CoreFoundation/CoreFoundation.h>
+
+          @interface SBLockScreenManager : NSObject
+          + (instancetype)sharedInstance;
+          - (BOOL)isUILocked;
+          - (void)lockUI;
+          - (void)lockUIFromSource:(int)source withOptions:(id)options;
+          @end
+
+          @interface SBMainWorkspace : NSObject
+          + (instancetype)sharedInstance;
+          - (BOOL)isSpringBoardActive;
+          @end
+
+          static BOOL gIntercept = NO;
+          static BOOL gEnabled = YES;
+          static BOOL gObserved = NO;
+
+          static void SB_OnEnable(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef i) { gEnabled = YES; }
+          static void SB_OnDisable(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef i) { gEnabled = NO; }
+
+          static void SB_Observe(const char *name, CFNotificationCallback cb) {
+              CFStringRef s = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
+              if (!s) return;
+              CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, cb, s, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+              CFRelease(s);
+          }
+
+          static void SB_SetupObservers(void) {
+              SB_Observe("com.lockswipe.tweak.enabled", SB_OnEnable);
+              SB_Observe("com.lockswipe.tweak.disabled", SB_OnDisable);
+          }
+
+          static id SB_SharedInstance(const char *clsName) {
+              Class cls = objc_getClass(clsName);
+              if (!cls) return nil;
+              return ((id (*)(id, SEL))objc_msgSend)(cls, sel_registerName("sharedInstance"));
+          }
+
+          static BOOL SB_BoolSend(id obj, const char *selName) {
+              if (!obj) return NO;
+              SEL sel = sel_registerName(selName);
+              if (![obj respondsToSelector:sel]) return NO;
+              return ((BOOL (*)(id, SEL))objc_msgSend)(obj, sel);
+          }
+
+          static BOOL SB_IsLocked(void) {
+              return SB_BoolSend(SB_SharedInstance("SBLockScreenManager"), "isUILocked");
+          }
+
+          static BOOL SB_IsHomeScreenActive(void) {
+              return SB_BoolSend(SB_SharedInstance("SBMainWorkspace"), "isSpringBoardActive");
+          }
+
+          static void SB_Lock(void) {
+              id m = SB_SharedInstance("SBLockScreenManager");
+              if (!m) return;
+              SEL s = sel_registerName("lockUIFromSource:withOptions:");
+              if ([m respondsToSelector:s]) {
+                  ((void (*)(id, SEL, int, id))objc_msgSend)(m, s, 1, NULL);
+              } else {
+                  SEL s2 = sel_registerName("lockUI");
+                  if ([m respondsToSelector:s2]) {
+                      ((void (*)(id, SEL))objc_msgSend)(m, s2);
+                  }
+              }
+          }
+
+          %hook SBFluidSwitcherGestureManager
+
+          - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
+              %orig;
+              @try {
+                  if (!gObserved) {
+                      gObserved = YES;
+                      SB_SetupObservers();
+                  }
+                  gIntercept = (gEnabled && (SB_IsHomeScreenActive() || SB_IsLocked()));
+              } @catch (NSException *e) { gIntercept = NO; }
+          }
+
+          - (void)fluidSwitcherGestureTransaction:(id)t didUpdateGesture:(id)g {
+              %orig;
+          }
+
+          - (void)fluidSwitcherGestureTransaction:(id)t didEndGesture:(id)g {
+              %orig;
+              if (gIntercept) {
+                  gIntercept = NO;
+                  dispatch_async(dispatch_get_main_queue(), ^{
+                      @try { SB_Lock(); } @catch (NSException *e) { }
+                  });
+              }
+          }
+
+          %end
+          EOF_TWEAK
+          cat > LockSwipePrefs/Makefile <<'EOF_PREFMAKE'
+          BUNDLE_NAME = LockSwipePrefs
+
+          LockSwipePrefs_FILES = LockSwipePrefs.m
+          LockSwipePrefs_INSTALL_PATH = /Library/PreferenceBundles
+          LockSwipePrefs_FRAMEWORKS = UIKit
+          LockSwipePrefs_PRIVATE_FRAMEWORKS = Preferences
+
+          include $(THEOS)/makefiles/common.mk
+          include $(THEOS_MAKE_PATH)/bundle.mk
+          EOF_PREFMAKE
+          cat > LockSwipePrefs/LockSwipePrefs.m <<'EOF_PREFM'
+          #import <Preferences/PSListController.h>
+          #import <Preferences/PSSpecifier.h>
+          #include <CoreFoundation/CoreFoundation.h>
+
+          @interface LockSwipePrefsListController : PSListController
+          @end
+
+          @implementation LockSwipePrefsListController
+
+          - (NSArray *)specifiers {
+              if (!_specifiers) {
+                  _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+              }
+              return _specifiers;
+          }
+
+          - (void)notifyState:(BOOL)on {
+              CFStringRef s = CFStringCreateWithCString(NULL, on ? "com.lockswipe.tweak.enabled" : "com.lockswipe.tweak.disabled", kCFStringEncodingUTF8);
+              if (!s) return;
+              CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), s, NULL, NULL, true);
+              CFRelease(s);
+          }
+
+          - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
+              [super setPreferenceValue:value specifier:specifier];
+              [self notifyState:[value boolValue]];
+          }
+
+          - (void)viewDidAppear:(BOOL)animated {
+              [super viewDidAppear:animated];
+              PSSpecifier *spec = [self specifierForID:@"enabled"];
+              if (spec) {
+                  id v = [self readPreferenceValue:spec];
+                  [self notifyState:v ? [v boolValue] : YES];
+              }
+          }
+
+          @end
+          EOF_PREFM
+          cat > LockSwipePrefs/Resources/Root.plist <<'EOF_ROOT'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>title</key>
+              <string>LockSwipe</string>
+              <key>items</key>
+              <array>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>default</key>
+                      <true/>
+                      <key>defaults</key>
+                      <string>com.lockswipe.tweak</string>
+                      <key>id</key>
+                      <string>enabled</string>
+                      <key>key</key>
+                      <string>enabled</string>
+                      <key>label</key>
+                      <string>启用</string>
+                  </dict>
+              </array>
+          </dict>
+          </plist>
+          EOF_ROOT
+          cat > LockSwipePrefs/Resources/Info.plist <<'EOF_INFO'
+          {
+              CFBundleDevelopmentRegion = "en";
+              CFBundleExecutable = "LockSwipePrefs";
+              CFBundleIdentifier = "com.lockswipe.prefs";
+              CFBundleInfoDictionaryVersion = "6.0";
+              CFBundleName = "LockSwipePrefs";
+              CFBundlePackageType = "BNDL";
+              CFBundleShortVersionString = "1.5.0";
+              CFBundleVersion = "1.5.0";
+              NSPrincipalClass = "LockSwipePrefsListController";
+          }
+          EOF_INFO
+          cat > LockSwipePrefs/layout/Library/PreferenceLoader/Preferences/LockSwipePrefs.plist <<'EOF_ENTRY'
+          {
+              entry = {
+                  bundle = "LockSwipePrefs";
+                  cell = PSLinkCell;
+                  detail = "LockSwipePrefsListController";
+                  label = "LockSwipe";
+              };
+          }
+          EOF_ENTRY
+
+      - name: Build deb
         id: build
         continue-on-error: true
         run: |
+          cd LockSwipe
           set -o pipefail
-          {
-            mkdir -p LockSwipe/LockSwipePrefs/Resources
-            mkdir -p LockSwipe/LockSwipePrefs/layout/Library/PreferenceLoader/Preferences
-            cd LockSwipe
-            cat > Makefile <<'EOF_MAKEFILE'
-            TARGET := iphone:clang:latest:14.0
-            ARCHS = arm64e
-            THEOS_PACKAGE_SCHEME = roothide
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+          echo "=== DEB CONTENTS ===" | tee -a build.log
+          dpkg-deb -c packages/*.deb 2>&1 | tee -a build.log || true
+          echo "=== END ===" | tee -a build.log
 
-            include $(THEOS)/makefiles/common.mk
-
-            SUBPROJECTS += LockSwipePrefs
-
-            TWEAK_NAME = LockSwipe
-            LockSwipe_FILES = Tweak.x
-            LockSwipe_CFLAGS = -fobjc-arc -Wno-error
-            LockSwipe_FRAMEWORKS = Foundation
-
-            include $(THEOS_MAKE_PATH)/tweak.mk
-            include $(THEOS_MAKE_PATH)/aggregate.mk
-            EOF_MAKEFILE
-            cat > control <<'EOF_CONTROL'
-            Package: com.lockswipe.tweak
-            Name: LockSwipe
-            Version: 1.5.0
-            Architecture: iphoneos-arm64e
-            Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
-            Maintainer: LockSwipe
-            Author: LockSwipe
-            Section: Tweaks
-            Depends: mobilesubstrate
-            EOF_CONTROL
-            cat > LockSwipe.plist <<'EOF_PLIST'
-            {
-                Filter = {
-                    Bundles = ( "com.apple.springboard" );
-                };
-            }
-            EOF_PLIST
-            cat > Tweak.x <<'EOF_TWEAK'
-            #import <Foundation/Foundation.h>
-            #include <objc/runtime.h>
-            #include <objc/message.h>
-            #include <CoreFoundation/CoreFoundation.h>
-
-            @interface SBLockScreenManager : NSObject
-            + (instancetype)sharedInstance;
-            - (BOOL)isUILocked;
-            - (void)lockUI;
-            - (void)lockUIFromSource:(int)source withOptions:(id)options;
-            @end
-
-            @interface SBMainWorkspace : NSObject
-            + (instancetype)sharedInstance;
-            - (BOOL)isSpringBoardActive;
-            @end
-
-            static BOOL gIntercept = NO;
-            static BOOL gEnabled = YES;
-            static BOOL gObserved = NO;
-
-            static void SB_OnEnable(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef i) { gEnabled = YES; }
-            static void SB_OnDisable(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef i) { gEnabled = NO; }
-
-            static void SB_Observe(const char *name, CFNotificationCallback cb) {
-                CFStringRef s = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
-                if (!s) return;
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, cb, s, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                CFRelease(s);
-            }
-
-            static void SB_SetupObservers(void) {
-                SB_Observe("com.lockswipe.tweak.enabled", SB_OnEnable);
-                SB_Observe("com.lockswipe.tweak.disabled", SB_OnDisable);
-            }
-
-            static id SB_SharedInstance(const char *clsName) {
-                Class cls = objc_getClass(clsName);
-                if (!cls) return nil;
-                return ((id (*)(id, SEL))objc_msgSend)(cls, sel_registerName("sharedInstance"));
-            }
-
-            static BOOL SB_BoolSend(id obj, const char *selName) {
-                if (!obj) return NO;
-                SEL sel = sel_registerName(selName);
-                if (![obj respondsToSelector:sel]) return NO;
-                return ((BOOL (*)(id, SEL))objc_msgSend)(obj, sel);
-            }
-
-            static BOOL SB_IsLocked(void) {
-                return SB_BoolSend(SB_SharedInstance("SBLockScreenManager"), "isUILocked");
-            }
-
-            static BOOL SB_IsHomeScreenActive(void) {
-                return SB_BoolSend(SB_SharedInstance("SBMainWorkspace"), "isSpringBoardActive");
-            }
-
-            static void SB_Lock(void) {
-                id m = SB_SharedInstance("SBLockScreenManager");
-                if (!m) return;
-                SEL s = sel_registerName("lockUIFromSource:withOptions:");
-                if ([m respondsToSelector:s]) {
-                    ((void (*)(id, SEL, int, id))objc_msgSend)(m, s, 1, NULL);
-                } else {
-                    SEL s2 = sel_registerName("lockUI");
-                    if ([m respondsToSelector:s2]) {
-                        ((void (*)(id, SEL))objc_msgSend)(m, s2);
-                    }
-                }
-            }
-
-            %hook SBFluidSwitcherGestureManager
-
-            - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
-                %orig;
-                @try {
-                    if (!gObserved) {
-                        gObserved = YES;
-                        SB_SetupObservers();
-                    }
-                    gIntercept = (gEnabled && (SB_IsHomeScreenActive() || SB_IsLocked()));
-                } @catch (NSException *e) { gIntercept = NO; }
-            }
-
-            - (void)fluidSwitcherGestureTransaction:(id)t didUpdateGesture:(id)g {
-                %orig;
-            }
-
-            - (void)fluidSwitcherGestureTransaction:(id)t didEndGesture:(id)g {
-                %orig;
-                if (gIntercept) {
-                    gIntercept = NO;
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        @try { SB_Lock(); } @catch (NSException *e) { }
-                    });
-                }
-            }
-
-            %end
-            EOF_TWEAK
-            cat > LockSwipePrefs/Makefile <<'EOF_PREFMAKE'
-            BUNDLE_NAME = LockSwipePrefs
-
-            LockSwipePrefs_FILES = LockSwipePrefs.m
-            LockSwipePrefs_INSTALL_PATH = /Library/PreferenceBundles
-            LockSwipePrefs_FRAMEWORKS = UIKit
-            LockSwipePrefs_PRIVATE_FRAMEWORKS = Preferences
-
-            include $(THEOS)/makefiles/common.mk
-            include $(THEOS_MAKE_PATH)/bundle.mk
-            EOF_PREFMAKE
-            cat > LockSwipePrefs/LockSwipePrefs.m <<'EOF_PREFM'
-            #import <Preferences/PSListController.h>
-            #import <Preferences/PSSpecifier.h>
-            #include <CoreFoundation/CoreFoundation.h>
-
-            @interface LockSwipePrefsListController : PSListController
-            @end
-
-            @implementation LockSwipePrefsListController
-
-            - (NSArray *)specifiers {
-                if (!_specifiers) {
-                    _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-                }
-                return _specifiers;
-            }
-
-            - (void)notifyState:(BOOL)on {
-                CFStringRef s = CFStringCreateWithCString(NULL, on ? "com.lockswipe.tweak.enabled" : "com.lockswipe.tweak.disabled", kCFStringEncodingUTF8);
-                if (!s) return;
-                CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), s, NULL, NULL, true);
-                CFRelease(s);
-            }
-
-            - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
-                [super setPreferenceValue:value specifier:specifier];
-                [self notifyState:[value boolValue]];
-            }
-
-            - (void)viewDidAppear:(BOOL)animated {
-                [super viewDidAppear:animated];
-                PSSpecifier *spec = [self specifierForID:@"enabled"];
-                if (spec) {
-                    id v = [self readPreferenceValue:spec];
-                    [self notifyState:v ? [v boolValue] : YES];
-                }
-            }
-
-            @end
-            EOF_PREFM
-            cat > LockSwipePrefs/Resources/Root.plist <<'EOF_ROOT'
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>title</key>
-                <string>LockSwipe</string>
-                <key>items</key>
-                <array>
-                    <dict>
-                        <key>cell</key>
-                        <string>PSSwitchCell</string>
-                        <key>default</key>
-                        <true/>
-                        <key>defaults</key>
-                        <string>com.lockswipe.tweak</string>
-                        <key>id</key>
-                        <string>enabled</string>
-                        <key>key</key>
-                        <string>enabled</string>
-                        <key>label</key>
-                        <string>启用</string>
-                    </dict>
-                </array>
-            </dict>
-            </plist>
-            EOF_ROOT
-            cat > LockSwipePrefs/Resources/Info.plist <<'EOF_INFO'
-            {
-                CFBundleDevelopmentRegion = "en";
-                CFBundleExecutable = "LockSwipePrefs";
-                CFBundleIdentifier = "com.lockswipe.prefs";
-                CFBundleInfoDictionaryVersion = "6.0";
-                CFBundleName = "LockSwipePrefs";
-                CFBundlePackageType = "BNDL";
-                CFBundleShortVersionString = "1.5.0";
-                CFBundleVersion = "1.5.0";
-                NSPrincipalClass = "LockSwipePrefsListController";
-            }
-            EOF_INFO
-            cat > LockSwipePrefs/layout/Library/PreferenceLoader/Preferences/LockSwipePrefs.plist <<'EOF_ENTRY'
-            {
-                entry = {
-                    bundle = "LockSwipePrefs";
-                    cell = PSLinkCell;
-                    detail = "LockSwipePrefsListController";
-                    label = "LockSwipe";
-                };
-            }
-            EOF_ENTRY
-            echo "=== DEB CONTENTS ==="
-            dpkg-deb -c packages/*.deb || true
-            echo "=== END ==="
-          } 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
-
-      - name: Save build log to repo
+      - name: Save build log to ci-log branch
         if: always()
         continue-on-error: true
         run: |
-          if [ ! -f "$GITHUB_WORKSPACE/build.log" ]; then
-            echo "no build.log produced" > "$GITHUB_WORKSPACE/build.log"
-          fi
-          cp "$GITHUB_WORKSPACE/build.log" build-log.txt
+          mkdir -p LockSwipe
+          if [ ! -f LockSwipe/build.log ]; then echo "no build.log produced" > LockSwipe/build.log; fi
+          cp LockSwipe/build.log build-log.txt
           git config user.name "ci-bot"
           git config user.email "ci-bot@users.noreply.github.com"
+          git checkout -B ci-log
           git add -f build-log.txt
-          git commit -m "ci: build log [skip ci]" || true
-          git push origin HEAD:main || true
+          git commit -m "ci log [skip ci]" || true
+          git push -f origin ci-log || true
 
       - name: Upload deb
         if: steps.build.outcome == 'success'
