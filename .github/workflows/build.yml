@@ -45,11 +45,11 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.7.0
+          Version: 1.8.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
-          Maintainer: LockSwipe
-          Author: LockSwipe
+          Maintainer: qweasdhxy
+          Author: qweasdhxy
           Section: Tweaks
           Depends: mobilesubstrate
           EOF_CONTROL
@@ -299,27 +299,51 @@ jobs:
           </plist>
           EOF_ROOT
           cat > LockSwipePrefs/Resources/Info.plist <<'EOF_INFO'
-          {
-              CFBundleDevelopmentRegion = "en";
-              CFBundleExecutable = "LockSwipePrefs";
-              CFBundleIdentifier = "com.lockswipe.prefs";
-              CFBundleInfoDictionaryVersion = "6.0";
-              CFBundleName = "LockSwipePrefs";
-              CFBundlePackageType = "BNDL";
-              CFBundleShortVersionString = "1.7.0";
-              CFBundleVersion = "1.7.0";
-              NSPrincipalClass = "LockSwipePrefsListController";
-          }
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>en</string>
+              <key>CFBundleExecutable</key>
+              <string>LockSwipePrefs</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.lockswipe.prefs</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>LockSwipePrefs</string>
+              <key>CFBundlePackageType</key>
+              <string>BNDL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.8.0</string>
+              <key>CFBundleVersion</key>
+              <string>1.8.0</string>
+              <key>NSPrincipalClass</key>
+              <string>LockSwipePrefsListController</string>
+          </dict>
+          </plist>
           EOF_INFO
           cat > LockSwipePrefs/layout/Library/PreferenceLoader/Preferences/LockSwipePrefs.plist <<'EOF_ENTRY'
-          {
-              entry = {
-                  bundle = "LockSwipePrefs";
-                  cell = PSLinkCell;
-                  detail = "LockSwipePrefsListController";
-                  label = "LockSwipe";
-              };
-          }
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>entry</key>
+              <dict>
+                  <key>bundle</key>
+                  <string>LockSwipePrefs</string>
+                  <key>cell</key>
+                  <string>PSLinkCell</string>
+                  <key>detail</key>
+                  <string>LockSwipePrefsListController</string>
+                  <key>isController</key>
+                  <true/>
+                  <key>label</key>
+                  <string>LockSwipe</string>
+              </dict>
+          </dict>
+          </plist>
           EOF_ENTRY
 
       - name: Build deb
