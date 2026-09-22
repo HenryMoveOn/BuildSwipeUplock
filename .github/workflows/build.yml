@@ -45,7 +45,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.2.0
+          Version: 1.3.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -78,14 +78,13 @@ jobs:
           @end
 
           static BOOL gIntercept = NO;
-          static BOOL gEnabled = YES;
 
-          static void SB_RefreshEnabled(void) {
+          static BOOL SB_Enabled(void) {
               @try {
                   Boolean exists = false;
                   Boolean v = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.lockswipe.tweak"), &exists);
-                  gEnabled = exists ? (BOOL)v : YES;
-              } @catch (NSException *e) { }
+                  return exists ? (BOOL)v : YES;
+              } @catch (NSException *e) { return YES; }
           }
 
           static id SB_SharedInstance(NSString *clsName) {
@@ -132,7 +131,7 @@ jobs:
           - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
               %orig;
               @try {
-                  gIntercept = (gEnabled && (SB_IsHomeScreenActive() || SB_IsLocked()));
+                  gIntercept = (SB_Enabled() && (SB_IsHomeScreenActive() || SB_IsLocked()));
               } @catch (NSException *e) { gIntercept = NO; }
           }
 
@@ -151,16 +150,6 @@ jobs:
           }
 
           %end
-
-          %ctor {
-              SB_RefreshEnabled();
-              dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
-                  while (YES) {
-                      [NSThread sleepForTimeInterval:2.0];
-                      SB_RefreshEnabled();
-                  }
-              });
-          }
           EOF_TWEAK
           cat > LockSwipePrefs/Makefile <<'EOF_PREFMAKE'
           BUNDLE_NAME = LockSwipePrefs
@@ -223,8 +212,8 @@ jobs:
               CFBundleInfoDictionaryVersion = "6.0";
               CFBundleName = "LockSwipePrefs";
               CFBundlePackageType = "BNDL";
-              CFBundleShortVersionString = "1.2.0";
-              CFBundleVersion = "1.2.0";
+              CFBundleShortVersionString = "1.3.0";
+              CFBundleVersion = "1.3.0";
               NSPrincipalClass = "LockSwipePrefsListController";
           }
           EOF_INFO
