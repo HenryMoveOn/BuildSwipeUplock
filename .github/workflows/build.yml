@@ -19,13 +19,17 @@ jobs:
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)"
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "$HOME/theos/bin" >> "$GITHUB_PATH"
+          echo "--- theos sdks ---"
+          ls "$HOME/theos/sdks" || true
+          echo "--- clang ---"
+          "$HOME/theos/toolchain/linux/iphone/bin/clang" --version || true
 
       - name: Generate tweak project
         run: |
           mkdir -p LockSwipe
           cd LockSwipe
           cat > Makefile <<'EOF_MAKEFILE'
-          TARGET := iphone:clang:16.5:14.0
+          TARGET := iphone:clang:latest:14.0
           ARCHS = arm64e
           THEOS_PACKAGE_SCHEME = roothide
 
@@ -41,7 +45,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.0.0
+          Version: 1.0.1
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -59,7 +63,6 @@ jobs:
           cat > Tweak.x <<'EOF_TWEAK'
           // LockSwipe - Home Screen / Lock Screen: swipe up on home bar => lock.
           #import <Foundation/Foundation.h>
-          #import <UIKit/UIKit.h>
           #import <objc/runtime.h>
 
           @interface SBLockScreenManager : NSObject
@@ -74,39 +77,34 @@ jobs:
           - (BOOL)isSpringBoardActive;
           @end
 
+          static id SB_SharedInstance(NSString *clsName) {
+              Class cls = NSClassFromString(clsName);
+              if (!cls) return nil;
+              return [(id)cls sharedInstance];
+          }
+
           static BOOL SB_IsLocked(void) {
-              Class c = objc_getClass("SBLockScreenManager");
-              if (!c) return NO;
-              id m = ((id (*)(id, SEL))objc_msgSend)(c, @selector(sharedInstance));
-              SEL s = NSSelectorFromString(@"isUILocked");
-              if (m && [m respondsToSelector:s]) {
-                  return ((BOOL (*)(id, SEL))objc_msgSend)(m, s);
-              }
-              return NO;
+              SBLockScreenManager *m = (SBLockScreenManager *)SB_SharedInstance(@"SBLockScreenManager");
+              if (!m) return NO;
+              return [m isUILocked];
           }
 
           static BOOL SB_IsHomeScreenActive(void) {
-              Class c = objc_getClass("SBMainWorkspace");
-              if (!c) return NO;
-              id w = ((id (*)(id, SEL))objc_msgSend)(c, @selector(sharedInstance));
-              SEL s = NSSelectorFromString(@"isSpringBoardActive");
-              if (w && [w respondsToSelector:s]) {
-                  return ((BOOL (*)(id, SEL))objc_msgSend)(w, s);
-              }
-              return NO;
+              SBMainWorkspace *w = (SBMainWorkspace *)SB_SharedInstance(@"SBMainWorkspace");
+              if (!w) return NO;
+              return [w isSpringBoardActive];
           }
 
           static void SB_Lock(void) {
-              Class c = objc_getClass("SBLockScreenManager");
-              if (!c) return;
-              id m = ((id (*)(id, SEL))objc_msgSend)(c, @selector(sharedInstance));
+              SBLockScreenManager *m = (SBLockScreenManager *)SB_SharedInstance(@"SBLockScreenManager");
               if (!m) return;
               SEL s = NSSelectorFromString(@"lockUIFromSource:withOptions:");
               if ([m respondsToSelector:s]) {
-                  ((void (*)(id, SEL, int, id))objc_msgSend)(m, s, 1, nil);
+                  void (*fn)(id, SEL, int, id) = (void (*)(id, SEL, int, id))objc_msgSend;
+                  fn(m, s, 1, nil);
                   NSLog(@"[LockSwipe] locked via lockUIFromSource");
-              } else if ([m respondsToSelector:NSSelectorFromString(@"lockUI")]) {
-                  ((void (*)(id, SEL))objc_msgSend)(m, NSSelectorFromString(@"lockUI"));
+              } else if ([m respondsToSelector:@selector(lockUI)]) {
+                  [m lockUI];
                   NSLog(@"[LockSwipe] locked via lockUI");
               } else {
                   NSLog(@"[LockSwipe] no lock method available");
@@ -119,7 +117,7 @@ jobs:
 
           - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
               gIntercept = (SB_IsHomeScreenActive() || SB_IsLocked());
-              NSLog(@"[LockSwipe] begin intercept=%d", gIntercept);
+              NSLog(@"[LockSwipe] begin intercept=%d", (int)gIntercept);
               %orig;
           }
 
@@ -141,20 +139,40 @@ jobs:
           EOF_TWEAK
 
       - name: Build deb
+        id: build
+        continue-on-error: true
         run: |
           cd LockSwipe
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+          set -o pipefail
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+
+      - name: Save build log to repo (on failure)
+        if: steps.build.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          cp LockSwipe/build.log build-log.txt
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git add -f build-log.txt
+          git commit -m "ci: build log [skip ci]" || true
+          git push || true
 
       - name: Upload deb
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: LockSwipe-deb
           path: LockSwipe/packages/*.deb
 
       - name: Publish release
+        if: steps.build.outcome == 'success'
         uses: softprops/action-gh-release@v2
         continue-on-error: true
         with:
           tag_name: build-${{ github.run_number }}
           name: LockSwipe build ${{ github.run_number }}
           files: LockSwipe/packages/*.deb
+
+      - name: Fail if build failed
+        if: steps.build.outcome == 'failure'
+        run: exit 1
