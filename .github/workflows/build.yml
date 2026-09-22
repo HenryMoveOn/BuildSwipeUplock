@@ -45,7 +45,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.lockswipe.tweak
           Name: LockSwipe
-          Version: 1.5.0
+          Version: 1.6.0
           Architecture: iphoneos-arm64e
           Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
           Maintainer: LockSwipe
@@ -118,18 +118,34 @@ jobs:
               return SB_BoolSend(SB_SharedInstance("SBMainWorkspace"), "isSpringBoardActive");
           }
 
+          static void SB_TurnScreenOff(void) {
+              id bl = SB_SharedInstance("SBBacklightController");
+              if (!bl) return;
+              SEL s1 = sel_registerName("_startFadeOutAnimationFromLockSource:");
+              if ([bl respondsToSelector:s1]) {
+                  ((void (*)(id, SEL, int))objc_msgSend)(bl, s1, 3);
+                  return;
+              }
+              SEL s2 = sel_registerName("setBacklightState:source:");
+              if ([bl respondsToSelector:s2]) {
+                  ((void (*)(id, SEL, int, int))objc_msgSend)(bl, s2, 0, 667);
+              }
+          }
+
           static void SB_Lock(void) {
               id m = SB_SharedInstance("SBLockScreenManager");
-              if (!m) return;
-              SEL s = sel_registerName("lockUIFromSource:withOptions:");
-              if ([m respondsToSelector:s]) {
-                  ((void (*)(id, SEL, int, id))objc_msgSend)(m, s, 1, NULL);
-              } else {
-                  SEL s2 = sel_registerName("lockUI");
-                  if ([m respondsToSelector:s2]) {
-                      ((void (*)(id, SEL))objc_msgSend)(m, s2);
+              if (m) {
+                  SEL s = sel_registerName("lockUIFromSource:withOptions:");
+                  if ([m respondsToSelector:s]) {
+                      ((void (*)(id, SEL, int, id))objc_msgSend)(m, s, 1, NULL);
+                  } else {
+                      SEL s2 = sel_registerName("lockUI");
+                      if ([m respondsToSelector:s2]) {
+                          ((void (*)(id, SEL))objc_msgSend)(m, s2);
+                      }
                   }
               }
+              SB_TurnScreenOff();
           }
 
           %hook SBFluidSwitcherGestureManager
@@ -247,8 +263,8 @@ jobs:
               CFBundleInfoDictionaryVersion = "6.0";
               CFBundleName = "LockSwipePrefs";
               CFBundlePackageType = "BNDL";
-              CFBundleShortVersionString = "1.5.0";
-              CFBundleVersion = "1.5.0";
+              CFBundleShortVersionString = "1.6.0";
+              CFBundleVersion = "1.6.0";
               NSPrincipalClass = "LockSwipePrefsListController";
           }
           EOF_INFO
