@@ -31,10 +31,10 @@ jobs:
 
       - name: 安装 ldid 签名工具
         run: |
-          sudo curl -fL "https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5/ldid_linux_x86_64" -o /usr/local/bin/ldid
+          sudo curl -fL "https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64" -o /usr/local/bin/ldid
           sudo chmod +x /usr/local/bin/ldid
 
-      - name: 安装官方最新 Theos（原生支持 RootHide）
+      - name: 安装官方 Theos（原生支持 RootHide）
         run: |
           git clone --recursive https://github.com/theos/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
