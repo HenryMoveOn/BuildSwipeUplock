@@ -1232,6 +1232,7 @@ jobs:
                       <key>validValues</key>
                       <array>
                           <string>0.00</string>
+                          <string>0.0001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1247,6 +1248,7 @@ jobs:
                       <key>validTitles</key>
                       <array>
                           <string>0%（完全透明，仍可点击）</string>
+                          <string>0.01%（几乎完全不可见）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%（几乎看不见）</string>
@@ -1276,6 +1278,7 @@ jobs:
                       <key>validValues</key>
                       <array>
                           <string>0.00</string>
+                          <string>0.0001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1288,6 +1291,7 @@ jobs:
                       <key>validTitles</key>
                       <array>
                           <string>0%（无边框，默认）</string>
+                          <string>0.01%（几乎完全不可见）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%</string>
@@ -1620,6 +1624,7 @@ jobs:
                       <key>validValues</key>
                       <array>
                           <string>0.00</string>
+                          <string>0.0001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1635,6 +1640,7 @@ jobs:
                       <key>validTitles</key>
                       <array>
                           <string>0%（完全透明，仍可点击）</string>
+                          <string>0.01%（几乎完全不可见）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%（几乎看不见）</string>
@@ -1664,6 +1670,7 @@ jobs:
                       <key>validValues</key>
                       <array>
                           <string>0.00</string>
+                          <string>0.0001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1676,6 +1683,7 @@ jobs:
                       <key>validTitles</key>
                       <array>
                           <string>0%（无边框，默认）</string>
+                          <string>0.01%（几乎完全不可见）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%</string>
