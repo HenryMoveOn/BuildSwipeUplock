@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.5.1
+          Version: 1.5.2
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -139,7 +139,7 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 1.5.1
+           * HomeBarURL 1.5.2
            *
            * 1.3.x 点不动的根因：ElleKit 的过滤器不认 Frameworks 键 → dylib 从未被注入。
            * 本版改用 Classes 命中所有加载了 UIKit 的进程，并内置遥测。
@@ -360,6 +360,7 @@ jobs:
           @property (nonatomic, strong)   NSTimer *timer;
           @property (nonatomic, strong)   UIWindow *fallbackWindow;
           @property (nonatomic, assign)   BOOL started;
+          @property (nonatomic, assign)   NSInteger lastTint;   // -1=未知 0=关 1=开
           + (instancetype)shared;
           - (void)start;
           - (void)refresh;
@@ -377,17 +378,21 @@ jobs:
           - (void)start {
               if (self.started) return;
               self.started = YES;
+              self.lastTint = -1;
 
               NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
               if (dir) gLogPath = [dir stringByAppendingPathComponent:@"HomeBarURL.log"];
 
-              gDebug = HBBool(HBPrefs(), kDbgKey, YES);
+              NSDictionary *p0 = HBPrefs();
+              gDebug = HBBool(p0, kDbgKey, YES);
 
               NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
               [nc addObserver:self selector:@selector(hbKeyboardShow:) name:UIKeyboardWillShowNotification object:nil];
               [nc addObserver:self selector:@selector(hbKeyboardHide:) name:UIKeyboardWillHideNotification object:nil];
               [nc addObserver:self selector:@selector(refresh) name:UIWindowDidBecomeKeyNotification object:nil];
               [nc addObserver:self selector:@selector(refresh) name:UIApplicationDidFinishLaunchingNotification object:nil];
+              // 从「设置」切回来时立刻重新读配置，不用等下一次轮询
+              [nc addObserver:self selector:@selector(refresh) name:UIApplicationDidBecomeActiveNotification object:nil];
 
               HBLog(@"===== loaded in %@ (iOS %@) =====",
                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(no bundle id)",
@@ -398,13 +403,18 @@ jobs:
                                     [[UIDevice currentDevice] systemVersion],
                                     HBTime()]);
 
+              HBLog(@"resolved settings: readable=%d count=%d payload=%@",
+                    (int)(p0.count > 0), (int)p0.count, p0);
+
               [self refresh];
 
-              self.timer = [NSTimer scheduledTimerWithTimeInterval:2.0
-                                                            target:self
-                                                          selector:@selector(refresh)
-                                                          userInfo:nil
-                                                           repeats:YES];
+              // 1 秒轮询 + CommonModes：默认模式下的定时器在滚动/触摸追踪期间不会触发
+              self.timer = [NSTimer timerWithTimeInterval:1.0
+                                                   target:self
+                                                 selector:@selector(refresh)
+                                                 userInfo:nil
+                                                  repeats:YES];
+              [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
           }
 
           - (void)hbKeyboardShow:(NSNotification *)n { self.keyboardVisible = YES;  [self refresh]; }
@@ -490,8 +500,24 @@ jobs:
               v.activeWidth    = HBNum(p, kWKey, 180.0);
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
 
-              // 调试染色：让触发层肉眼可见（默认开启，与 1.4.0 效果一致；不需要可在设置里关闭）
-              if (HBBool(p, kTintKey, YES)) {
+              // 调试染色：只有「确实读到了配置、且开关为开」才染红。
+              // 关键：读不到配置时（沙盒进程常见的 cfprefsd 不可达）绝不能回落成「开」，
+              // 否则红色永远关不掉 —— 这正是 1.5.1 的 bug。
+              BOOL tint;
+              if (p.count == 0) {
+                  tint = NO;
+              } else {
+                  tint = HBBool(p, kTintKey, YES);
+              }
+
+              if (tint != self.lastTint) {
+                  self.lastTint = tint;
+                  HBLog(@"tint -> %@  (prefsReadable=%d, raw=%@)",
+                        tint ? @"ON" : @"OFF", (int)(p.count > 0),
+                        p[kTintKey] ? [NSString stringWithFormat:@"%@", p[kTintKey]] : @"(key missing)");
+              }
+
+              if (tint) {
                   v.backgroundColor = [[UIColor redColor] colorWithAlphaComponent:0.30];
                   v.layer.borderWidth = 1.0;
                   v.layer.borderColor = [UIColor redColor].CGColor;
@@ -1100,9 +1126,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.5.1</string>
+              <string>1.5.2</string>
               <key>CFBundleVersion</key>
-              <string>1.5.1</string>
+              <string>1.5.2</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
