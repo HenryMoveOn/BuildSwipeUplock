@@ -1,386 +1,46 @@
-name: Build LockSwipe
+name: Build HomeBarURL DEB
 
 on:
   push:
+    branches: [ main ]
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      THEOS_PACKAGE_SCHEME: roothide
+
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Install Theos (roothide)
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: 安装系统依赖
         run: |
-          set +e
-          LOG="$GITHUB_WORKSPACE/install.log"
-          : > "$LOG"
-          echo "### attempt: install-theos (authenticated)" >> "$LOG"
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)" >> "$LOG" 2>&1
-          rc=$?
-          echo "install-theos rc=$rc" >> "$LOG"
-          if [ "$rc" -ne 0 ] || [ ! -d "$HOME/theos/sdks" ] || [ -z "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ]; then
-            echo "### fallback: manual setup" >> "$LOG"
-            brew install ldid xz >> "$LOG" 2>&1
-            [ -d "$HOME/theos" ] || git clone --recursive --depth 1 https://github.com/roothide/theos.git "$HOME/theos" >> "$LOG" 2>&1
-            rm -rf "$HOME/theos/sdks"
-            mkdir -p "$HOME/theos/sdks"
-            "$HOME/theos/bin/install-sdk" latest >> "$LOG" 2>&1
-          fi
-          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
-          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
-          if [ ! -d "$HOME/theos/sdks" ] || [ -z "$(ls -A "$HOME/theos/sdks" 2>/dev/null)" ]; then
-            echo "INSTALL FAILED" >> "$LOG"
-            exit 1
-          fi
-          ls -la "$HOME/theos/sdks"
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev libplist-utils curl git xz-utils
 
-      - name: Ensure GNU make
-        run: brew install make || true
-
-      - name: Generate tweak project
+      - name: 部署 Theos（含 RootHide 支持）
         run: |
-          mkdir -p LockSwipe/LockSwipePrefs/Resources
-          mkdir -p LockSwipe/LockSwipePrefs/layout/Library/PreferenceLoader/Preferences
-          cd LockSwipe
-          cat > Makefile <<'EOF_MAKEFILE'
-          TARGET := iphone:clang:16.5:15.0
-          ARCHS = arm64e
-          THEOS_PACKAGE_SCHEME = roothide
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+          # 集成 RootHide 编译方案
+          git clone https://github.com/roothide/theos.git /tmp/roothide-theos
+          cp -rf /tmp/roothide-theos/* $THEOS/
 
-          include $(THEOS)/makefiles/common.mk
-
-          SUBPROJECTS += LockSwipePrefs
-
-          TWEAK_NAME = LockSwipe
-          LockSwipe_FILES = Tweak.x
-          LockSwipe_CFLAGS = -fobjc-arc -Wno-error
-          LockSwipe_FRAMEWORKS = Foundation IOKit
-
-          include $(THEOS_MAKE_PATH)/tweak.mk
-          include $(THEOS_MAKE_PATH)/aggregate.mk
-          EOF_MAKEFILE
-          cat > control <<'EOF_CONTROL'
-          Package: com.lockswipe.tweak
-          Name: LockSwipe
-          Version: 1.9.2
-          Architecture: iphoneos-arm64e
-          Description: Swipe up the home bar on the Home Screen or Lock Screen to lock the device. In-app behaviour is untouched.
-          Maintainer: qweasdhxy
-          Author: qweasdhxy
-          Section: Tweaks
-          Depends: mobilesubstrate
-          EOF_CONTROL
-          cat > LockSwipe.plist <<'EOF_PLIST'
-          {
-              Filter = {
-                  Bundles = ( "com.apple.springboard" );
-              };
-          }
-          EOF_PLIST
-          cat > Tweak.x <<'EOF_TWEAK'
-          #import <Foundation/Foundation.h>
-          #include <objc/runtime.h>
-          #include <objc/message.h>
-          #include <CoreFoundation/CoreFoundation.h>
-          #include <dlfcn.h>
-          #include <unistd.h>
-          #include <mach/mach_time.h>
-
-          @interface SBLockScreenManager : NSObject
-          + (instancetype)sharedInstance;
-          - (BOOL)isUILocked;
-          - (void)lockUI;
-          - (void)lockUIFromSource:(int)source withOptions:(id)options;
-          @end
-
-          @interface SBMainWorkspace : NSObject
-          + (instancetype)sharedInstance;
-          - (BOOL)isSpringBoardActive;
-          @end
-
-          typedef struct __IOHIDEvent *IOHIDEventRef;
-          typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
-          typedef IOHIDEventRef (*SB_HIDKeyEventFn)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, Boolean);
-          typedef IOHIDEventSystemClientRef (*SB_HIDClientCreateFn)(CFAllocatorRef);
-          typedef void (*SB_HIDClientDispatchFn)(IOHIDEventSystemClientRef, IOHIDEventRef);
-
-          static BOOL gIntercept = NO;
-          static BOOL gEnabled = YES;
-          static BOOL gObserved = NO;
-
-          static void SB_OnEnable(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef i) { gEnabled = YES; }
-          static void SB_OnDisable(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef i) { gEnabled = NO; }
-
-          static void SB_Observe(const char *name, CFNotificationCallback cb) {
-              CFStringRef s = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
-              if (!s) return;
-              CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, cb, s, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-              CFRelease(s);
-          }
-
-          static void SB_SetupObservers(void) {
-              SB_Observe("com.lockswipe.tweak.enabled", SB_OnEnable);
-              SB_Observe("com.lockswipe.tweak.disabled", SB_OnDisable);
-          }
-
-          static id SB_SharedInstance(const char *clsName) {
-              Class cls = objc_getClass(clsName);
-              if (!cls) return nil;
-              return ((id (*)(id, SEL))objc_msgSend)(cls, sel_registerName("sharedInstance"));
-          }
-
-          static BOOL SB_BoolSend(id obj, const char *selName) {
-              if (!obj) return NO;
-              SEL sel = sel_registerName(selName);
-              if (![obj respondsToSelector:sel]) return NO;
-              return ((BOOL (*)(id, SEL))objc_msgSend)(obj, sel);
-          }
-
-          static BOOL SB_IsLocked(void) {
-              return SB_BoolSend(SB_SharedInstance("SBLockScreenManager"), "isUILocked");
-          }
-
-          static BOOL SB_IsHomeScreenActive(void) {
-              return SB_BoolSend(SB_SharedInstance("SBMainWorkspace"), "isSpringBoardActive");
-          }
-
-          static BOOL SB_PressPowerButton(void) {
-              static SB_HIDKeyEventFn sKeyEvent = NULL;
-              static SB_HIDClientCreateFn sCreate = NULL;
-              static SB_HIDClientDispatchFn sDispatch = NULL;
-              static BOOL sInited = NO;
-              if (!sInited) {
-                  sInited = YES;
-                  void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
-                  if (h) {
-                      sKeyEvent = (SB_HIDKeyEventFn)dlsym(h, "IOHIDEventCreateKeyboardEvent");
-                      sCreate = (SB_HIDClientCreateFn)dlsym(h, "IOHIDEventSystemClientCreate");
-                      sDispatch = (SB_HIDClientDispatchFn)dlsym(h, "IOHIDEventSystemClientDispatchEvent");
-                  }
-              }
-              if (!sKeyEvent || !sCreate || !sDispatch) return NO;
-              IOHIDEventSystemClientRef client = sCreate(kCFAllocatorDefault);
-              if (!client) return NO;
-              uint64_t ts = mach_absolute_time();
-              IOHIDEventidSwitcherGestureManager
-
-          - (void)fluidSwitcherGestureTransaction:(id)t didBeginGesture:(id)g {
-              %orig;
-              @try {
-                  if (!gObserved) {
-                      gObserved = YES;
-                      SB_SetupObservers();
-                  }
-                  gIntercept = (gEnabled && (SB_IsHomeScreenActive() || SB_IsLocked()));
-              } @catch (NSException *e) { gIntercept = NO; }
-          }
-
-          - (void)fluidSwitcherGestureTransaction:(id)t didUpdateGesture:(id)g {
-              %orig;
-          }
-
-          - (void)fluidSwitcherGestureTransaction:(id)t didEndGesture:(id)g {
-              %orig;
-              if (gIntercept) {
-                  gIntercept = NO;
-                  dispatch_async(dispatch_get_main_queue(), ^{
-                      @try { SB_Lock(); } @catch (NSException *e) { }
-                  });
-              }
-          }
-
-          %end
-          EOF_TWEAK
-          cat > LockSwipePrefs/Makefile <<'EOF_PREFMAKE'
-          BUNDLE_NAME = LockSwipePrefs
-
-          LockSwipePrefs_FILES = LockSwipePrefs.m
-          LockSwipePrefs_CFLAGS = -fobjc-arc -Wno-error
-          LockSwipePrefs_INSTALL_PATH = /Library/PreferenceBundles
-          LockSwipePrefs_FRAMEWORKS = UIKit
-          LockSwipePrefs_PRIVATE_FRAMEWORKS = Preferences
-
-          include $(THEOS)/makefiles/common.mk
-          include $(THEOS_MAKE_PATH)/bundle.mk
-          EOF_PREFMAKE
-          cat > LockSwipePrefs/LockSwipePrefs.m <<'EOF_PREFM'
-          #import <Preferences/PSListController.h>
-          #import <Preferences/PSSpecifier.h>
-          #include <CoreFoundation/CoreFoundation.h>
-
-          @interface LockSwipePrefsListController : PSListController
-          @end
-
-          @implementation LockSwipePrefsListController
-
-          - (NSArray *)specifiers {
-              if (!_specifiers) {
-                  _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-              }
-              return _specifiers;
-          }
-
-          - (void)notifyState:(BOOL)on {
-              CFStringRef s = CFStringCreateWithCString(NULL, on ? "com.lockswipe.tweak.enabled" : "com.lockswipe.tweak.disabled", kCFStringEncodingUTF8);
-              if (!s) return;
-              CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), s, NULL, NULL, true);
-              CFRelease(s);
-          }
-
-          - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
-              [super setPreferenceValue:value specifier:specifier];
-              [self notifyState:[value boolValue]];
-          }
-
-          - (void)viewDidAppear:(BOOL)animated {
-              [super viewDidAppear:animated];
-              PSSpecifier *spec = [self specifierForID:@"enabled"];
-              if (spec) {
-                  id v = [self readPreferenceValue:spec];
-                  [self notifyState:v ? [v boolValue] : YES];
-              }
-          }
-
-          @end
-          EOF_PREFM
-          cat > LockSwipePrefs/Resources/Root.plist <<'EOF_ROOT'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>title</key>
-              <string>LockSwipe</string>
-              <key>items</key>
-              <array>
-                  <dict>
-                      <key>cell</key>
-                      <string>PSSwitchCell</string>
-                      <key>default</key>
-                      <true/>
-                      <key>defaults</key>
-                      <string>com.lockswipe.tweak</string>
-                      <key>id</key>
-                      <string>enabled</string>
-                      <key>key</key>
-                      <string>enabled</string>
-                      <key>label</key>
-                      <string>启用</string>
-                  </dict>
-              </array>
-          </dict>
-          </plist>
-          EOF_ROOT
-          cat > LockSwipePrefs/Resources/Info.plist <<'EOF_INFO'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleDevelopmentRegion</key>
-              <string>en</string>
-              <key>CFBundleExecutable</key>
-              <string>LockSwipePrefs</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.lockswipe.prefs</string>
-              <key>CFBundleInfoDictionaryVersion</key>
-              <string>6.0</string>
-              <key>CFBundleName</key>
-              <string>LockSwipePrefs</string>
-              <key>CFBundlePackageType</key>
-              <string>BNDL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.9.2</string>
-              <key>CFBundleVersion</key>
-              <string>1.9.2</string>
-              <key>NSPrincipalClass</key>
-              <string>LockSwipePrefsListController</string>
-          </dict>
-          </plist>
-          EOF_INFO
-          cat > LockSwipePrefs/layout/Library/PreferenceLoader/Preferences/LockSwipePrefs.plist <<'EOF_ENTRY'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>entry</key>
-              <dict>
-                  <key>bundle</key>
-                  <string>LockSwipePrefs</string>
-                  <key>cell</key>
-                  <string>PSLinkCell</string>
-                  <key>detail</key>
-                  <string>LockSwipePrefsListController</string>
-                  <key>isController</key>
-                  <true/>
-                  <key>label</key>
-                  <string>LockSwipe</string>
-              </dict>
-          </dict>
-          </plist>
-          EOF_ENTRY
-
-      - name: Build deb
-        id: build
-        continue-on-error: true
+      - name: 配置 iOS 16.4 SDK
         run: |
-          set -o pipefail
-          cd LockSwipe
-          MAKE_BIN="$(brew --prefix)/opt/make/bin/gmake"
-          if [ ! -x "$MAKE_BIN" ]; then MAKE_BIN="make"; fi
-          "$MAKE_BIN" package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
-          set +e
-          echo "=== SDKs in \$THEOS/sdks ===" | tee -a build.log
-          ls -la "$THEOS/sdks" 2>&1 | tee -a build.log
-          echo "=== DEB CONTENTS ===" | tee -a build.log
-          DEB="$(pwd)/$(ls packages/*.deb | head -1)"
-          echo "deb: $DEB" | tee -a build.log
-          rm -rf /tmp/debx
-          mkdir -p /tmp/debx
-          ( cd /tmp/debx && ar x "$DEB" ) 2>&1 | tee -a build.log
-          ls -la /tmp/debx 2>&1 | tee -a build.log
-          for f in /tmp/debx/data.tar.*; do tar -tvf "$f" 2>&1 | tee -a build.log; done
-          echo "=== END ===" | tee -a build.log
+          mkdir -p $THEOS/sdks
+          curl -L "https://github.com/theos/sdks/releases/download/2024-02/iPhoneOS16.4.sdk.tar.xz" -o sdk.tar.xz
+          tar -xf sdk.tar.xz -C $THEOS/sdks/
 
-      - name: Save build log to ci-log branch
-        if: always()
-        continue-on-error: true
+      - name: 编译生成 DEB 包
         run: |
-          {
-            echo "===== INSTALL LOG ====="
-            cat install.log 2>/dev/null || echo "(no install.log)"
-            echo
-            echo "===== BUILD LOG ====="
-            cat LockSwipe/build.log 2>/dev/null || echo "(no build.log)"
-          } > build-log.txt
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@users.noreply.github.com"
-          git checkout -B ci-log
-          git add -f build-log.txt
-          git commit -m "ci log [skip ci]" || true
-          git push -f origin ci-log || true
+          make clean
+          make package FINALPACKAGE=1
 
-      - name: Upload deb
-        if: steps.build.outcome == 'success'
+      - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: LockSwipe-deb
-          path: LockSwipe/packages/*.deb
-
-      - name: Publish release
-        if: steps.build.outcome == 'success'
-        uses: softprops/action-gh-release@v2
-        continue-on-error: true
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: LockSwipe build ${{ github.run_number }}
-          files: LockSwipe/packages/*.deb
-
-      - name: Fail if build failed
-        if: steps.build.outcome == 'failure'
-        run: exit 1
+          name: HomeBarURL-RootHide
+          path: packages/*.deb
