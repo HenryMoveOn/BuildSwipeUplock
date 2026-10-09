@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 2.0.1
+          Version: 2.0.2
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -129,8 +129,11 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 2.0.1
+           * HomeBarURL 2.0.2
            *
+           * 2.0.2：新增**独立显示层** HBTintView，命中层与显示层彻底分离 ——
+           *   颜色/透明度只写显示层，命中层永远是 clear + 无边框，
+           *   于是「透明度调 0」不再影响点击。同时去掉触发区边框。
            * 2.0.1：透明度新增 0%（完全透明，仍可点击）与 5% 两档；
            *   边框颜色不再单列，直接跟随「区域颜色」+「区域透明度」，与填充同色同透明度。
            *
@@ -346,6 +349,34 @@ jobs:
 
           @end
 
+          /* ---------------- 纯显示层（不参与命中） ---------------- */
+          //
+          // 关键拆分：命中层(HBTriggerView) 与 显示层(HBTintView) 必须是两个 view。
+          // 之前把颜色/透明度直接改在命中层上，于是「透明度调 0」会把命中层一起
+          // 变成透明——真机上就表现为「透明度为 0 时点击没反应」。
+          // 现在：命中层永远 clear、无边框、userInteractionEnabled=YES，任何外观设置都不碰它；
+          // 颜色/透明度只作用在独立的显示层上，显示层 userInteractionEnabled=NO。
+
+          @interface HBTintView : UIView
+          @end
+
+          @implementation HBTintView
+
+          - (instancetype)initWithFrame:(CGRect)frame {
+              if ((self = [super initWithFrame:frame])) {
+                  self.backgroundColor        = [UIColor clearColor];
+                  self.opaque                 = NO;
+                  self.userInteractionEnabled = NO;   // 只负责显示，绝不参与命中
+              }
+              return self;
+          }
+
+          // 双保险：即使被系统 hitTest 走到，也不吃掉任何触摸
+          - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event { return nil; }
+          - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event { return NO; }
+
+          @end
+
           /* ---------------- 触发区几何 ---------------- */
           //
           // 历史教训：曾尝试遍历视图树去「找到小白条本体」，实测三宗罪：
@@ -393,6 +424,7 @@ jobs:
           @property (nonatomic, assign)   BOOL keyboardVisible;
           @property (nonatomic, strong)   NSTimer *timer;
           @property (nonatomic, strong)   HBPassWindow *passWindow;   // 唯一的触发层，全局只有一层
+          @property (nonatomic, strong)   HBTintView   *tintView;     // 纯显示层，不参与命中
           @property (nonatomic, assign)   BOOL started;
           @property (nonatomic, strong)   NSString *lastRectDesc;   // 仅在几何变化时打日志
           @property (nonatomic, strong)   NSString *lastStyleDesc;  // 仅在外观变化时打日志
@@ -400,7 +432,7 @@ jobs:
           - (void)start;
           - (void)refresh;
           - (CGRect)triggerRectForBounds:(CGRect)bounds prefs:(NSDictionary *)p;
-          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p;
+          - (void)applyTint:(NSDictionary *)p;
           @end
 
           @implementation HBManager
@@ -516,44 +548,32 @@ jobs:
               return CGRectIntegral(f);
           }
 
-          // 触发区外观：颜色 / 透明度可配。
-          // 关键：开关关闭时必须做到「完全不可见」—— 背景 clear、无边框、无子层；
-          // 同时命中能力绝不能被外观逻辑关掉（hidden/alpha/userInteractionEnabled 一律保持可命中）。
-          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p {
-              // 只要配置读得到，就以配置为准；读不到时按关闭处理（宁可不显示，也不要恒定红条）
+          // 外观只作用于**独立的显示层**，绝不碰命中层。
+          // 没有边框：颜色/透明度就是显示层本身的背景色。
+          - (void)applyTint:(NSDictionary *)p {
+              HBTintView *tv = self.tintView;
+              if (!tv) return;
+
+              // 只要配置读得到就以配置为准；读不到时按关闭处理（宁可不显示，也不要恒定色块）
               BOOL show = (p.count > 0) ? HBBool(p, kOvKey, YES) : NO;
 
               CGFloat op = HBNum(p, kOpKey, 0.30);
               op = MAX(0.0, MIN(1.0, op));
 
-              // 边框颜色不再单列：直接跟随「区域颜色」+「区域透明度」，
-              // 与填充同色同透明度，不再额外加 alpha（否则透明度调 0 时边框还留着）。
-              // 透明度为 0（或开关关闭）时整层完全不可见，但依然可点击。
-              BOOL visible = show && op > 0.005;
-
-              if (visible) {
-                  UIColor *c   = HBOverlayColor(HBStr(p, kClKey, @"red"));
-                  UIColor *cs  = [c colorWithAlphaComponent:op];   // 填充与边框共用同一个颜色
-                  v.backgroundColor   = cs;
-                  v.layer.borderWidth = 1.0;
-                  v.layer.borderColor = cs.CGColor;
+              if (show && op > 0.005) {
+                  UIColor *c = HBOverlayColor(HBStr(p, kClKey, @"red"));
+                  tv.backgroundColor = [c colorWithAlphaComponent:op];
+                  tv.hidden = NO;
               } else {
-                  v.backgroundColor   = [UIColor clearColor];
-                  v.layer.borderWidth = 0.0;
-                  v.layer.borderColor = nil;
+                  tv.backgroundColor = [UIColor clearColor];
+                  tv.hidden = YES;    // 显示层整层隐藏；命中层完全不受影响
               }
-
-              // 命中能力强制打开：外观的任何分支都不允许关掉它
-              v.opaque                 = NO;
-              v.hidden                 = NO;
-              v.alpha                  = 1.0;
-              v.userInteractionEnabled = YES;
 
               NSString *desc = [NSString stringWithFormat:@"show=%d op=%.2f color=%@",
                                 (int)show, op, show ? HBStr(p, kClKey, @"red") : @"-"];
               if (![desc isEqualToString:self.lastStyleDesc]) {
                   self.lastStyleDesc = desc;
-                  HBLog(@"overlay -> %@ (readable=%d raw=%@)", desc, (int)(p.count > 0),
+                  HBLog(@"tint -> %@ (readable=%d raw=%@)", desc, (int)(p.count > 0),
                         p[kOvKey] ? [NSString stringWithFormat:@"%@", p[kOvKey]] : @"(key missing)");
               }
           }
@@ -603,7 +623,23 @@ jobs:
               v.activeWidth    = 0.0;   // 整层即命中区，view 本身已经只有小白条那么大
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
 
-              [self applyOverlayTo:v prefs:p];
+              // 命中层：外观永远不碰它（无边框、背景 clear、始终可命中）
+              v.backgroundColor        = [UIColor clearColor];
+              v.layer.borderWidth      = 0.0;
+              v.layer.borderColor      = nil;
+              v.opaque                 = NO;
+              v.hidden                 = NO;
+              v.alpha                  = 1.0;
+              v.userInteractionEnabled = YES;
+
+              // 显示层：独立 view，跟随触发区几何，只负责颜色/透明度
+              if (!self.tintView) {
+                  self.tintView = [[HBTintView alloc] initWithFrame:f];
+                  [w insertSubview:self.tintView belowSubview:v];
+              }
+              if (!CGRectEqualToRect(self.tintView.frame, f)) self.tintView.frame = f;
+              [self applyTint:p];
+
               [self configure:v prefs:p];
               [w bringSubviewToFront:v];
 
@@ -1282,9 +1318,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>2.0.1</string>
+              <string>2.0.2</string>
               <key>CFBundleVersion</key>
-              <string>2.0.1</string>
+              <string>2.0.2</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
