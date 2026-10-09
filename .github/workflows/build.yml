@@ -1,58 +1,323 @@
-name: Build HomeBarURL DEB
+name: Build HomeBarURL
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    runs-on: ubuntu-latest
-    env:
-      THEOS: ${{ github.workspace }}/theos
-      THEOS_PACKAGE_SCHEME: roothide
-
+    runs-on: macos-latest
     steps:
-      - name: 检出代码
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 安装系统依赖
+      - name: Install Theos (roothide)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            dpkg-dev \
-            libplist-utils \
-            libxml2-dev \
-            libssl-dev \
-            curl \
-            git \
-            xz-utils
+          set +e
+          LOG="$GITHUB_WORKSPACE/install.log"
+          : > "$LOG"
+          echo "### attempt: install-theos (authenticated)" >> "$LOG"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos)" >> "$LOG" 2>&1
+          rc=$?
+          echo "install-theos rc=$rc" >> "$LOG"
+          if [ "$rc" -ne 0 ] || [ -z "$(ls -d "$HOME/theos/sdks"/iPhoneOS*.sdk 2>/dev/null)" ]; then
+            echo "### fallback: manual setup" >> "$LOG"
+            brew install ldid xz >> "$LOG" 2>&1
+            [ -d "$HOME/theos" ] || git clone --recursive --depth 1 https://github.com/roothide/theos.git "$HOME/theos" >> "$LOG" 2>&1
+            rm -rf "$HOME/theos/sdks"
+            mkdir -p "$HOME/theos/sdks"
+            "$HOME/theos/bin/install-sdk" latest >> "$LOG" 2>&1
+          fi
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
+          echo "=== sdks ===" >> "$LOG"
+          ls -la "$HOME/theos/sdks" >> "$LOG" 2>&1
+          if [ -z "$(ls -d "$HOME/theos/sdks"/iPhoneOS*.sdk 2>/dev/null)" ]; then
+            echo "INSTALL FAILED: no iPhoneOS sdk" >> "$LOG"
+            exit 1
+          fi
+          ls -la "$HOME/theos/sdks"
 
-      - name: 安装 ldid 签名工具
+      - name: Ensure GNU make
+        run: brew install make || true
+
+      - name: Generate tweak project
         run: |
-          sudo curl -fL "https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64" -o /usr/local/bin/ldid
-          sudo chmod +x /usr/local/bin/ldid
+          mkdir -p HomeBarURL/HomeBarURLPrefs/Resources
+          mkdir -p HomeBarURL/HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences
+          cd HomeBarURL
+          cat > Makefile <<'EOF_MAKEFILE'
+          TARGET := iphone:clang:16.5:15.0
+          ARCHS = arm64e
+          THEOS_PACKAGE_SCHEME = roothide
 
-      - name: 安装官方 Theos（原生支持 RootHide）
+          include $(THEOS)/makefiles/common.mk
+
+          SUBPROJECTS += HomeBarURLPrefs
+
+          TWEAK_NAME = HomeBarURL
+          HomeBarURL_FILES = Tweak.xm
+          HomeBarURL_CFLAGS = -fobjc-arc -Wno-error
+          HomeBarURL_FRAMEWORKS = UIKit
+
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          include $(THEOS_MAKE_PATH)/aggregate.mk
+          EOF_MAKEFILE
+          cat > control <<'EOF_CONTROL'
+          Package: com.yourname.homebarurl
+          Name: HomeBarURL
+          Version: 1.2
+          Architecture: iphoneos-arm64e
+          Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
+          Maintainer: qweasdhxy
+          Author: qweasdhxy
+          Section: Tweaks
+          Depends: mobilesubstrate, preferenceloader
+          EOF_CONTROL
+          cat > HomeBarURL.plist <<'EOF_FILTER'
+          {
+              Filter = {
+                  Frameworks = ( "UIKit" );
+              };
+          }
+          EOF_FILTER
+          cat > Tweak.xm <<'EOF_TWEAK'
+          #import <UIKit/UIKit.h>
+          #import <objc/runtime.h>
+
+          static NSString * const kSuiteName = @"com.yourname.homebarurl";
+          static NSString * const kURLKey = @"targetURL";
+
+          @interface UIView (HomeBarURL)
+          - (void)hburl_handleTap;
+          @end
+
+          %hook UIView
+
+          - (void)didMoveToWindow {
+              %orig;
+
+              if (!self.window) return;
+
+              // 真正的小白条视图是 MaterialKit 的 MTLumaDodgePillView
+              // SpringBoard 和所有 App 里都是这一个类
+              NSString *cls = NSStringFromClass(self.class);
+              if (![cls containsString:@"LumaDodgePill"]) return;
+
+              static const char kGestureAddedKey;
+              if (objc_getAssociatedObject(self, &kGestureAddedKey)) return;
+
+              self.userInteractionEnabled = YES;
+              UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
+                  initWithTarget:self
+                  action:@selector(hburl_handleTap)];
+              tap.numberOfTapsRequired = 1;
+              tap.cancelsTouchesInView = NO;
+              [self addGestureRecognizer:tap];
+
+              objc_setAssociatedObject(self, &kGestureAddedKey, @(YES), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+          }
+
+          %new
+          - (void)hburl_handleTap {
+              NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kSuiteName];
+              NSString *urlString = [defaults stringForKey:kURLKey];
+              if (!urlString || urlString.length == 0) {
+                  urlString = @"https://www.example.com";
+              }
+              NSURL *url = [NSURL URLWithString:urlString];
+              if (url) {
+                  [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+              }
+          }
+
+          %end
+          EOF_TWEAK
+          cat > HomeBarURLPrefs/Makefile <<'EOF_PREFMAKE'
+          BUNDLE_NAME = HomeBarURLPrefs
+
+          HomeBarURLPrefs_FILES = HomeBarURLPrefs.m
+          HomeBarURLPrefs_CFLAGS = -Wno-error
+          HomeBarURLPrefs_INSTALL_PATH = /Library/PreferenceBundles
+          HomeBarURLPrefs_FRAMEWORKS = UIKit
+          HomeBarURLPrefs_PRIVATE_FRAMEWORKS = Preferences
+
+          include $(THEOS)/makefiles/common.mk
+          include $(THEOS_MAKE_PATH)/bundle.mk
+          EOF_PREFMAKE
+          cat > HomeBarURLPrefs/HomeBarURLPrefs.m <<'EOF_PREFM'
+          #import <Preferences/PSListController.h>
+
+          @interface HomeBarURLPrefsListController : PSListController
+          @end
+
+          @implementation HomeBarURLPrefsListController
+
+          - (NSArray *)specifiers {
+              NSArray *list = [super specifiers];
+              if (list == nil) {
+                  list = [self loadSpecifiersFromPlistName:@"Root" target:self];
+              }
+              return list;
+          }
+
+          @end
+          EOF_PREFM
+          cat > HomeBarURLPrefs/Resources/Root.plist <<'EOF_ROOT'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>title</key>
+              <string>HomeBarURL</string>
+              <key>items</key>
+              <array>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>点击小白条打开</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSTextFieldCell</string>
+                      <key>label</key>
+                      <string>目标网址</string>
+                      <key>key</key>
+                      <string>targetURL</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>id</key>
+                      <string>targetURL</string>
+                      <key>default</key>
+                      <string>https://www.example.com</string>
+                      <key>placeholder</key>
+                      <string>https://</string>
+                      <key>autocapitalizationType</key>
+                      <integer>0</integer>
+                      <key>autocorrectionType</key>
+                      <integer>0</integer>
+                      <key>keyboardType</key>
+                      <integer>2</integer>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>footerText</key>
+                      <string>输入完整网址（必须包含 http:// 或 https://），修改后无需重启，点击小白条立即生效。</string>
+                  </dict>
+              </array>
+          </dict>
+          </plist>
+          EOF_ROOT
+          cat > HomeBarURLPrefs/Resources/Info.plist <<'EOF_INFO'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>zh_CN</string>
+              <key>CFBundleExecutable</key>
+              <string>HomeBarURLPrefs</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.yourname.homebarurl.prefs</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>HomeBarURL</string>
+              <key>CFBundlePackageType</key>
+              <string>BNDL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.2</string>
+              <key>CFBundleVersion</key>
+              <string>1.2</string>
+              <key>NSPrincipalClass</key>
+              <string>HomeBarURLPrefsListController</string>
+          </dict>
+          </plist>
+          EOF_INFO
+          cat > HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURLPrefs.plist <<'EOF_ENTRY'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>entry</key>
+              <dict>
+                  <key>bundle</key>
+                  <string>HomeBarURLPrefs</string>
+                  <key>cell</key>
+                  <string>PSLinkCell</string>
+                  <key>detail</key>
+                  <string>HomeBarURLPrefsListController</string>
+                  <key>isController</key>
+                  <true/>
+                  <key>label</key>
+                  <string>HomeBarURL</string>
+              </dict>
+          </dict>
+          </plist>
+          EOF_ENTRY
+
+      - name: Build deb
+        id: build
+        continue-on-error: true
         run: |
-          git clone --recursive https://github.com/theos/theos.git $THEOS
-          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          set -o pipefail
+          cd HomeBarURL
+          MAKE_BIN="$(brew --prefix)/opt/make/bin/gmake"
+          if [ ! -x "$MAKE_BIN" ]; then MAKE_BIN="make"; fi
+          "$MAKE_BIN" package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
 
-      - name: 下载 iOS 16.4 SDK
+      - name: Save build log to ci-log branch
+        if: always()
+        continue-on-error: true
         run: |
-          mkdir -p $THEOS/sdks
-          curl -fL "https://github.com/xybp888/iOS-SDKs/releases/download/iOS-SDKs/iPhoneOS16.4.sdk.tar.xz" -o $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz
-          tar -xf $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz -C $THEOS/sdks/
-          rm $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz
+          {
+            echo "===== META ====="
+            echo "run=$GITHUB_RUN_NUMBER sha=$GITHUB_SHA build_outcome=${{ steps.build.outcome }}"
+            echo
+            echo "===== ERRORS / WARNINGS (filtered) ====="
+            grep -nE "error:|error |Error|undefined|ld: |make(\[[0-9]+\])?: \*\*\*|fatal|No such file|cannot|not found|failed" HomeBarURL/build.log 2>/dev/null | tail -n 120
+            echo
+            echo "===== BUILD LOG TAIL (80) ====="
+            tail -n 80 HomeBarURL/build.log 2>/dev/null
+            echo
+            echo "===== DEB PRODUCED? ====="
+            ls -la HomeBarURL/packages/ 2>/dev/null
+            echo
+            echo "===== INSTALL LOG TAIL (30) ====="
+            tail -n 30 install.log 2>/dev/null
+          } > build-log.txt
+          wc -c build-log.txt
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git checkout -B ci-log
+          git add -f build-log.txt
+          git commit -m "ci log [skip ci]" || true
+          git push -f origin ci-log || true
 
-      - name: 编译 DEB 安装包
-        run: |
-          make clean
-          make package FINALPACKAGE=1
-
-      - name: 上传成品
+      - name: Upload deb
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: HomeBarURL-RootHide
-          path: packages/*.deb
+          name: HomeBarURL-deb
+          path: HomeBarURL/packages/*.deb
+
+      - name: Publish release
+        if: steps.build.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: HomeBarURL build ${{ github.run_number }}
+          files: HomeBarURL/packages/*.deb
+
+      - name: Fail if build failed
+        if: steps.build.outcome == 'failure'
+        run: exit 1
