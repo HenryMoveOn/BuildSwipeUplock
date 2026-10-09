@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>userDefaultsSuiteName</key>
+    <string>com.yourname.homebarurl</string>
+    <key>defaultValues</key>
+    <dict>
+        <key>targetURL</key>
+        <string>https://www.example.com</string>
+    </dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>点击小白条打开</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTextFieldCell</string>
+            <key>label</key>
+            <string>目标网址</string>
+            <key>key</key>
+            <string>targetURL</string>
+            <key>placeholder</key>
+            <string>https://</string>
+            <key>autocapitalizationType</key>
+            <integer>0</integer>
+            <key>autocorrectionType</key>
+            <integer>0</integer>
+            <key>keyboardType</key>
+            <integer>2</integer>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>footerText</key>
+            <string>输入完整网址（必须包含 http:// 或 https://），修改后无需重启，点击小白条立即生效。支持桌面和所有 App 内小白条。</string>
+        </dict>
+    </array>
+</dict>
+</plist>
