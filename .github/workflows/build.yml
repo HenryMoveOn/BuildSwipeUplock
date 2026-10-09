@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 2.0.2
+          Version: 2.0.3
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -129,8 +129,10 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 2.0.2
+           * HomeBarURL 2.0.3
            *
+           * 2.0.3：填充透明度新增 0.01 档；**边框透明度独立成一项** overlayBorderOpacity（默认 0.00 = 无边框）；
+           *   启动日志加 [BUILD STAMP]，便于确认真机实际运行的版本。
            * 2.0.2：新增**独立显示层** HBTintView，命中层与显示层彻底分离 ——
            *   颜色/透明度只写显示层，命中层永远是 clear + 无边框，
            *   于是「透明度调 0」不再影响点击。同时去掉触发区边框。
@@ -165,7 +167,8 @@ jobs:
           static NSString * const kDyKey   = @"triggerOffsetY"; // 相对默认位置上下微调(pt)
           static NSString * const kOvKey   = @"showOverlay";    // 是否显示触发区
           static NSString * const kClKey   = @"overlayColor";   // 触发区颜色
-          static NSString * const kOpKey   = @"overlayOpacity"; // 触发区透明度 0~1
+          static NSString * const kOpKey   = @"overlayOpacity"; // 触发区(填充)透明度 0~1
+          static NSString * const kOpBKey  = @"overlayBorderOpacity"; // 触发区边框透明度 0~1
           static NSString * const kDbgKey  = @"debugEnabled";
           static NSString * const kKbKey   = @"disableWithKeyboard";
           static NSString * const kHapKey  = @"haptic";
@@ -180,7 +183,7 @@ jobs:
           // 唯一权威来源：新增任何偏好键都必须加到这里，否则永远读不到（会静默回落默认值）
           static NSArray *HBPrefKeys(void) {
               return @[kURLKey, kOnKey, kActKey, kWKey, kHKey, kDyKey,
-                       kOvKey, kClKey, kOpKey, kDbgKey, kKbKey, kHapKey];
+                       kOvKey, kClKey, kOpKey, kOpBKey, kDbgKey, kKbKey, kHapKey];
           }
 
           static BOOL      gDebug   = YES;
@@ -468,6 +471,9 @@ jobs:
                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(no bundle id)",
                     [[UIDevice currentDevice] systemVersion]);
 
+              // 构建标记：一眼确认真机上跑的到底是哪个版本（防止装到旧包却以为改了没生效）
+              HBLog(@"[BUILD STAMP] HomeBarURL 2.0.3 | springboard-only | keys=%@", HBPrefKeys());
+
               HBSetDiag(kDiagLoad, [NSString stringWithFormat:@"已注入 %@ · iOS %@ · %@",
                                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(无 Bundle ID)",
                                     [[UIDevice currentDevice] systemVersion],
@@ -549,7 +555,7 @@ jobs:
           }
 
           // 外观只作用于**独立的显示层**，绝不碰命中层。
-          // 没有边框：颜色/透明度就是显示层本身的背景色。
+          // 填充透明度与边框透明度各自独立，都可以调到 0.01 这种近乎不可见的值。
           - (void)applyTint:(NSDictionary *)p {
               HBTintView *tv = self.tintView;
               if (!tv) return;
@@ -557,20 +563,34 @@ jobs:
               // 只要配置读得到就以配置为准；读不到时按关闭处理（宁可不显示，也不要恒定色块）
               BOOL show = (p.count > 0) ? HBBool(p, kOvKey, YES) : NO;
 
-              CGFloat op = HBNum(p, kOpKey, 0.30);
+              CGFloat op = HBNum(p, kOpKey, 0.30);   // 填充
               op = MAX(0.0, MIN(1.0, op));
+              CGFloat opB = HBNum(p, kOpBKey, 0.00);  // 边框
+              opB = MAX(0.0, MIN(1.0, opB));
 
-              if (show && op > 0.005) {
-                  UIColor *c = HBOverlayColor(HBStr(p, kClKey, @"red"));
-                  tv.backgroundColor = [c colorWithAlphaComponent:op];
+              UIColor *c = HBOverlayColor(HBStr(p, kClKey, @"red"));
+
+              if (show) {
+                  // 填充
+                  tv.backgroundColor = (op > 0.0) ? [c colorWithAlphaComponent:op] : [UIColor clearColor];
+                  // 边框：透明度独立，默认 0.00 = 完全无边框
+                  if (opB > 0.0) {
+                      tv.layer.borderWidth = 1.0;
+                      tv.layer.borderColor = [c colorWithAlphaComponent:opB].CGColor;
+                  } else {
+                      tv.layer.borderWidth = 0.0;
+                      tv.layer.borderColor = nil;
+                  }
                   tv.hidden = NO;
               } else {
                   tv.backgroundColor = [UIColor clearColor];
+                  tv.layer.borderWidth = 0.0;
+                  tv.layer.borderColor = nil;
                   tv.hidden = YES;    // 显示层整层隐藏；命中层完全不受影响
               }
 
-              NSString *desc = [NSString stringWithFormat:@"show=%d op=%.2f color=%@",
-                                (int)show, op, show ? HBStr(p, kClKey, @"red") : @"-"];
+              NSString *desc = [NSString stringWithFormat:@"show=%d fill=%.2f border=%.2f color=%@",
+                                (int)show, op, opB, show ? HBStr(p, kClKey, @"red") : @"-"];
               if (![desc isEqualToString:self.lastStyleDesc]) {
                   self.lastStyleDesc = desc;
                   HBLog(@"tint -> %@ (readable=%d raw=%@)", desc, (int)(p.count > 0),
@@ -1212,6 +1232,7 @@ jobs:
                       <key>validValues</key>
                       <array>
                           <string>0.00</string>
+                          <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
                           <string>0.15</string>
@@ -1226,6 +1247,7 @@ jobs:
                       <key>validTitles</key>
                       <array>
                           <string>0%（完全透明，仍可点击）</string>
+                          <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%（几乎看不见）</string>
                           <string>15%</string>
@@ -1236,6 +1258,44 @@ jobs:
                           <string>50%</string>
                           <string>70%</string>
                           <string>100%（不透明）</string>
+                      </array>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSLinkListCell</string>
+                      <key>detail</key>
+                      <string>PSListItemsController</string>
+                      <key>label</key>
+                      <string>边框透明度</string>
+                      <key>key</key>
+                      <string>overlayBorderOpacity</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>0.00</string>
+                      <key>validValues</key>
+                      <array>
+                          <string>0.00</string>
+                          <string>0.01</string>
+                          <string>0.05</string>
+                          <string>0.10</string>
+                          <string>0.20</string>
+                          <string>0.30</string>
+                          <string>0.50</string>
+                          <string>0.70</string>
+                          <string>1.00</string>
+                      </array>
+                      <key>validTitles</key>
+                      <array>
+                          <string>0%（无边框，默认）</string>
+                          <string>1%（几乎不可见）</string>
+                          <string>5%</string>
+                          <string>10%</string>
+                          <string>20%</string>
+                          <string>30%</string>
+                          <string>50%</string>
+                          <string>70%</string>
+                          <string>100%（实心描边）</string>
                       </array>
                   </dict>
 
@@ -1318,9 +1378,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>2.0.2</string>
+              <string>2.0.3</string>
               <key>CFBundleVersion</key>
-              <string>2.0.2</string>
+              <string>2.0.3</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -1560,6 +1620,7 @@ jobs:
                       <key>validValues</key>
                       <array>
                           <string>0.00</string>
+                          <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
                           <string>0.15</string>
@@ -1574,6 +1635,7 @@ jobs:
                       <key>validTitles</key>
                       <array>
                           <string>0%（完全透明，仍可点击）</string>
+                          <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%（几乎看不见）</string>
                           <string>15%</string>
@@ -1584,6 +1646,44 @@ jobs:
                           <string>50%</string>
                           <string>70%</string>
                           <string>100%（不透明）</string>
+                      </array>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSLinkListCell</string>
+                      <key>detail</key>
+                      <string>PSListItemsController</string>
+                      <key>label</key>
+                      <string>边框透明度</string>
+                      <key>key</key>
+                      <string>overlayBorderOpacity</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>0.00</string>
+                      <key>validValues</key>
+                      <array>
+                          <string>0.00</string>
+                          <string>0.01</string>
+                          <string>0.05</string>
+                          <string>0.10</string>
+                          <string>0.20</string>
+                          <string>0.30</string>
+                          <string>0.50</string>
+                          <string>0.70</string>
+                          <string>1.00</string>
+                      </array>
+                      <key>validTitles</key>
+                      <array>
+                          <string>0%（无边框，默认）</string>
+                          <string>1%（几乎不可见）</string>
+                          <string>5%</string>
+                          <string>10%</string>
+                          <string>20%</string>
+                          <string>30%</string>
+                          <string>50%</string>
+                          <string>70%</string>
+                          <string>100%（实心描边）</string>
                       </array>
                   </dict>
 
