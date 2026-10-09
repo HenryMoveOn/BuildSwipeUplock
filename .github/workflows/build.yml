@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.8.0
+          Version: 2.0.0
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -108,26 +108,16 @@ jobs:
               <key>Filter</key>
               <dict>
                   <!--
+                    只注入 SpringBoard，不注入任何其他进程。
                     ElleKit（Dopamine roothide 的注入框架）只识别
                     Bundles / Classes / Executables / CoreFoundationVersion 四种键，
                     完全不读 Frameworks —— 用 Frameworks 会导致 dylib 永远不被注入。
-                    这里用 Classes 命中所有加载了 UIKit 的进程（App + SpringBoard），
-                    各条之间是「或」关系；再显式补 SpringBoard 兜底。
+                    这里只用 Bundles 精确命中 SpringBoard；
+                    绝不能再加 Classes（那会把 dylib 塞进每一个加载了 UIKit 的进程）。
                   -->
-                  <key>Classes</key>
-                  <array>
-                      <string>UIApplication</string>
-                      <string>UIWindow</string>
-                      <string>UIView</string>
-                      <string>UIViewController</string>
-                  </array>
                   <key>Bundles</key>
                   <array>
                       <string>com.apple.springboard</string>
-                  </array>
-                  <key>Frameworks</key>
-                  <array>
-                      <string>UIKit</string>
                   </array>
               </dict>
           </dict>
@@ -139,39 +129,25 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 1.8.0
+           * HomeBarURL 2.0.0
            *
-           * 1.8.0：红色半透明区回归，并可配置；同时**移除全部视图树扫描**。
-           *   背景：1.8.0 的「扫描找小白条」被真机日志证伪 —— 它带来三宗罪：
-           *     a. 每秒递归遍历 SpringBoard 全部窗口的完整视图树 → 锁屏界面明显卡顿；
-           *     b. 类名规则 PillView 命中了 SBHSearchPillView（搜索框胶囊，在屏幕上半部）；
-           *     c. 类名匹配绕过了几何校验，SBHomeGrabberView 的 bounds 是全屏
-           *        → 触发区一度变成 {{0,0},{393,852}}，点哪都触发。
-           *   现在：触发区 = 底部居中、宽约 150pt、高等于底部安全区（34pt），
-           *   正好落在小白条那一行；零遍历、零卡顿、无误触。
-           *   新增可配置：宽度 / 高度 / 上下微调 / 显示开关 / 颜色(10 色) / 透明度(9 档)。
+           * 2.0.0 三条硬性约束（按用户要求彻底简化）：
+           *   1) 只注入 SpringBoard：Filter 里只剩 Bundles = com.apple.springboard，
+           *      不再使用 Classes（那会把 dylib 塞进每一个加载了 UIKit 的进程）。
+           *   2) 全局只有「一层」触发区：只挂在自建的 HBPassWindow 上。
+           *      之前同时挂了「独立窗口层」+「keyWindow 层」，于是出现两层红色半透明叠在一起。
+           *   3) 「显示触发区」关闭时必须完全不可见：背景 clear、无边框；
+           *      同时 hidden/alpha/userInteractionEnabled 一律保持可命中，关掉外观不影响点击。
            *
-           * 1.8.0：触发层改为恒全透明。
-           * 1.8.0：命中与视觉解耦。捕获面改为「独立穿透窗口」(HBPassWindow)，
-           *   不再依赖宿主 window 的视图层级。
-           *
-           * 1.5.3 红色关不掉的根因：debugOverlay 键漏登记在读取白名单 HBPrefKeys() 里，
-           *   导致永远读不到、恒定回落默认值 YES。
-           *
-           * 1.3.x 点不动的根因：ElleKit 的过滤器不认 Frameworks 键 → dylib 从未被注入。
-           * 本版改用 Classes 命中所有加载了 UIKit 的进程，并内置遥测。
-           *
-           * 触发原理（1.2.x 的老问题）：
-           *  1. 小白条本体 MTLumaDodgePillView 只有 ~5pt 高，手指几乎不可能命中；
-           *  2. 它所在的窗口可能是系统级窗口 / 祖先视图 userInteractionEnabled=NO，
-           *     UIKit 的 hitTest 根本不会把触摸派发给它，加手势识别器等于没加；
-           *  3. iOS 16 上类名与窗口归属各版本都有变化，靠类名硬匹配不可靠。
-           *
-           * 因此本版改为「与类名无关的透明触发层」：
-           *   - 主触发层：挂在当前 keyWindow 底部（宽度/高度可配置，默认 180x44pt）
-           *   - 副触发层：若探测到小白条本体且其窗口 != keyWindow，再在其窗口上补一层
-           *   - 两次触发 0.4s 内去重，避免同时命中导致打开两次
-           *   - 内置诊断日志，便于下次根据真机日志精确定位
+           * 触发原理：
+           *   - 小白条本体（MTLumaDodgePillView）只有 ~5pt 高，手指几乎不可能命中，
+           *     且它可能位于系统窗口、祖先视图 userInteractionEnabled=NO，
+           *     UIKit 的 hitTest 根本不会把触摸派发给它。
+           *   - 因此改为自建一个透明穿透窗口，在其底部放一块触发区：
+           *     hitTest 只吃「触发区内」的点，其余一律返回 nil 交回下层窗口。
+           *   - 触发区默认贴底、水平居中，宽约 136pt、高 34pt（= 底部安全区），
+           *     正好覆盖小白条所在的那一整行。
+           *   - 0.4s 内去重，避免重复打开。
            */
 
           static NSString * const HBID     = @"com.yourname.homebarurl";
@@ -369,7 +345,7 @@ jobs:
 
           /* ---------------- 触发区几何 ---------------- */
           //
-          // 1.8.0 曾尝试遍历视图树去「找到小白条本体」，实测三宗罪：
+          // 历史教训：曾尝试遍历视图树去「找到小白条本体」，实测三宗罪：
           //   a. 每秒递归遍历 SpringBoard 全部窗口的完整视图树 → 锁屏界面明显卡顿；
           //   b. 类名规则 PillView 命中了 SBHSearchPillView（搜索框胶囊，在屏幕上半部）；
           //   c) 类名规则绕过了几何校验，SBHomeGrabberView 的 bounds 是全屏
@@ -411,17 +387,17 @@ jobs:
           /* ---------------- 管理器 ---------------- */
 
           @interface HBManager : NSObject
-          @property (nonatomic, strong)   HBTriggerView *primary;
           @property (nonatomic, assign)   BOOL keyboardVisible;
           @property (nonatomic, strong)   NSTimer *timer;
-          @property (nonatomic, strong)   HBPassWindow *passWindow;
+          @property (nonatomic, strong)   HBPassWindow *passWindow;   // 唯一的触发层，全局只有一层
           @property (nonatomic, assign)   BOOL started;
           @property (nonatomic, strong)   NSString *lastRectDesc;   // 仅在几何变化时打日志
+          @property (nonatomic, strong)   NSString *lastStyleDesc;  // 仅在外观变化时打日志
           + (instancetype)shared;
           - (void)start;
           - (void)refresh;
           - (CGRect)triggerRectForBounds:(CGRect)bounds prefs:(NSDictionary *)p;
-          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p tag:(NSString *)tag;
+          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p;
           @end
 
           @implementation HBManager
@@ -437,6 +413,7 @@ jobs:
               if (self.started) return;
               self.started = YES;
               self.lastRectDesc = nil;
+              self.lastStyleDesc = nil;
 
               NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
               if (dir) gLogPath = [dir stringByAppendingPathComponent:@"HomeBarURL.log"];
@@ -474,8 +451,8 @@ jobs:
 
               [self refresh];
 
-              // 1 秒轮询 + CommonModes：默认模式下的定时器在滚动/触摸追踪期间不会触发
-              // 2 秒轮询：1 秒时 CFPreferencesAppSynchronize 的跨进程调用过于频繁，
+              // 2 秒轮询 + CommonModes（默认模式的定时器在滚动/触摸追踪期间不触发）。
+              // 1 秒时 CFPreferencesAppSynchronize 的跨进程调用过于频繁，
               // 在锁屏等场景会明显拖慢系统。窗口变化 / 键盘 / 前后台切换都会立即刷新，不依赖轮询。
               self.timer = [NSTimer timerWithTimeInterval:2.0
                                                    target:self
@@ -499,32 +476,12 @@ jobs:
           }
 
           - (void)refresh {
-              UIApplication *app = nil;
-              @try { app = [UIApplication sharedApplication]; } @catch (NSException *e) { app = nil; }
-              if (!app) return;
-
-              NSArray *wins = nil;
-              @try {
-                  if ([app respondsToSelector:@selector(windows)]) wins = app.windows;
-              } @catch (NSException *e) { wins = nil; }
-              if (wins.count == 0) {
-                  @try { if (app.keyWindow) wins = @[app.keyWindow]; } @catch (NSException *e) {}
-              }
-
-              UIWindow *key = nil;
-              for (UIWindow *w in wins) {
-                  if ([w isKindOfClass:[UIWindow class]] && w.isKeyWindow) { key = w; break; }
-              }
-              if (!key && wins.count) key = [wins lastObject];
-
               NSDictionary *p = HBPrefs();
               gDebug = HBBool(p, kDbgKey, YES);
 
-              // 独立穿透窗口是主捕获面：与宿主视图层级无关
+              // 全局只有一层触发区，挂在自建的独立穿透窗口上。
+              // 绝不能再往 keyWindow 上挂第二层 —— 那会出现「两层红色半透明」叠在一起。
               [self ensurePassWindow:p];
-
-              // 备份层挂在 keyWindow 上（视图树扫描已移除，不再有窗口漂移问题）
-              if (key) [self attachPrimaryTo:key prefs:p];
           }
 
           // 触发区几何：底部居中，默认正好盖住底部安全区（小白条所在的那一行）
@@ -556,20 +513,18 @@ jobs:
               return CGRectIntegral(f);
           }
 
-          // 触发区外观：颜色 / 透明度可配；无论外观如何，命中能力强制复位
-          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p tag:(NSString *)tag {
-              BOOL show;
-              if (p.count == 0) {
-                  show = YES;    // 读不到配置时保持历史行为（显示），不再恒定误显示
-              } else {
-                  show = HBBool(p, kOvKey, YES);
-              }
+          // 触发区外观：颜色 / 透明度可配。
+          // 关键：开关关闭时必须做到「完全不可见」—— 背景 clear、无边框、无子层；
+          // 同时命中能力绝不能被外观逻辑关掉（hidden/alpha/userInteractionEnabled 一律保持可命中）。
+          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p {
+              // 只要配置读得到，就以配置为准；读不到时按关闭处理（宁可不显示，也不要恒定红条）
+              BOOL show = (p.count > 0) ? HBBool(p, kOvKey, YES) : NO;
 
               CGFloat op = HBNum(p, kOpKey, 0.30);
               op = MAX(0.0, MIN(1.0, op));
-              UIColor *c = HBOverlayColor(HBStr(p, kClKey, @"red"));
 
               if (show) {
+                  UIColor *c = HBOverlayColor(HBStr(p, kClKey, @"red"));
                   v.backgroundColor   = [c colorWithAlphaComponent:op];
                   v.layer.borderWidth = 1.0;
                   v.layer.borderColor = [c colorWithAlphaComponent:MIN(1.0, op + 0.4)].CGColor;
@@ -579,17 +534,17 @@ jobs:
                   v.layer.borderColor = nil;
               }
 
-              // 命中能力在这里被强制打开，任何分支都不允许关掉它
+              // 命中能力强制打开：外观的任何分支都不允许关掉它
               v.opaque                 = NO;
               v.hidden                 = NO;
               v.alpha                  = 1.0;
               v.userInteractionEnabled = YES;
 
-              NSString *desc = [NSString stringWithFormat:@"%@:%d", tag ?: @"v", (int)show];
-              if (![desc isEqualToString:self.lastRectDesc]) {
-                  self.lastRectDesc = desc;
-                  HBLog(@"overlay[%@] -> %@ (readable=%d raw=%@)",
-                        tag ?: @"v", show ? @"ON" : @"OFF", (int)(p.count > 0),
+              NSString *desc = [NSString stringWithFormat:@"show=%d op=%.2f color=%@",
+                                (int)show, op, show ? HBStr(p, kClKey, @"red") : @"-"];
+              if (![desc isEqualToString:self.lastStyleDesc]) {
+                  self.lastStyleDesc = desc;
+                  HBLog(@"overlay -> %@ (readable=%d raw=%@)", desc, (int)(p.count > 0),
                         p[kOvKey] ? [NSString stringWithFormat:@"%@", p[kOvKey]] : @"(key missing)");
               }
           }
@@ -639,47 +594,15 @@ jobs:
               v.activeWidth    = 0.0;   // 整层即命中区，view 本身已经只有小白条那么大
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
 
-              [self applyOverlayTo:v prefs:p tag:@"pass"];
+              [self applyOverlayTo:v prefs:p];
               [self configure:v prefs:p];
               [w bringSubviewToFront:v];
 
-              NSString *desc = [NSString stringWithFormat:@"pass %@", NSStringFromCGRect(f)];
+              NSString *desc = [NSString stringWithFormat:@"%@", NSStringFromCGRect(f)];
               if (![desc isEqualToString:self.lastRectDesc]) {
                   self.lastRectDesc = desc;
                   HBLog(@"trigger rect -> %@ (capture=%d)", NSStringFromCGRect(f), (int)v.captureEnabled);
               }
-          }
-
-          - (void)ensureFallbackWindow:(NSDictionary *)p {
-              // 一个 window 都拿不到的进程里，独立穿透窗口本身就是兜底
-              [self ensurePassWindow:p];
-          }
-
-          - (void)attachPrimaryTo:(UIWindow *)w prefs:(NSDictionary *)p {
-              if (![w isKindOfClass:[UIWindow class]]) return;
-              if (CGRectIsEmpty(w.bounds)) return;
-
-              if (!self.primary) self.primary = [[HBTriggerView alloc] initWithFrame:CGRectZero];
-              HBTriggerView *v = self.primary;
-
-              if (v.window != w) {
-                  [v removeFromSuperview];
-                  [w addSubview:v];
-                  HBLog(@"primary overlay -> window %@ (bounds %@)",
-                        NSStringFromClass([w class]), NSStringFromCGRect(w.bounds));
-                  HBSetDiag(kDiagOverlay, [NSString stringWithFormat:@"触发层已挂载 → %@ · %@",
-                                           NSStringFromClass([w class]), HBTime()]);
-              }
-              [w bringSubviewToFront:v];
-
-              CGRect f = [self triggerRectForBounds:w.bounds prefs:p];
-              if (!CGRectEqualToRect(v.frame, f)) v.frame = f;
-
-              v.activeWidth    = 0.0;
-              v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
-
-              [self applyOverlayTo:v prefs:p tag:@"primary"];
-              [self configure:v prefs:p];
           }
 
           - (void)configure:(HBTriggerView *)v prefs:(NSDictionary *)p {
@@ -1346,9 +1269,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.8.0</string>
+              <string>2.0.0</string>
               <key>CFBundleVersion</key>
-              <string>1.8.0</string>
+              <string>2.0.0</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -1377,6 +1300,8 @@ jobs:
                       <string>PSGroupCell</string>
                       <key>label</key>
                       <string>开关</string>
+                      <key>footerText</key>
+                      <string>只注入 SpringBoard：桌面、锁屏、多任务界面生效；App 内不生效。装完需重启 SpringBoard（或修改后回到桌面等约 2 秒）才会生效。</string>
                   </dict>
                   <dict>
                       <key>cell</key>
