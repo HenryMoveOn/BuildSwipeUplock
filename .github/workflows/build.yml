@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 2.0.0
+          Version: 2.0.1
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -129,7 +129,10 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 2.0.0
+           * HomeBarURL 2.0.1
+           *
+           * 2.0.1：透明度新增 0%（完全透明，仍可点击）与 5% 两档；
+           *   边框颜色不再单列，直接跟随「区域颜色」+「区域透明度」，与填充同色同透明度。
            *
            * 2.0.0 三条硬性约束（按用户要求彻底简化）：
            *   1) 只注入 SpringBoard：Filter 里只剩 Bundles = com.apple.springboard，
@@ -523,11 +526,17 @@ jobs:
               CGFloat op = HBNum(p, kOpKey, 0.30);
               op = MAX(0.0, MIN(1.0, op));
 
-              if (show) {
-                  UIColor *c = HBOverlayColor(HBStr(p, kClKey, @"red"));
-                  v.backgroundColor   = [c colorWithAlphaComponent:op];
+              // 边框颜色不再单列：直接跟随「区域颜色」+「区域透明度」，
+              // 与填充同色同透明度，不再额外加 alpha（否则透明度调 0 时边框还留着）。
+              // 透明度为 0（或开关关闭）时整层完全不可见，但依然可点击。
+              BOOL visible = show && op > 0.005;
+
+              if (visible) {
+                  UIColor *c   = HBOverlayColor(HBStr(p, kClKey, @"red"));
+                  UIColor *cs  = [c colorWithAlphaComponent:op];   // 填充与边框共用同一个颜色
+                  v.backgroundColor   = cs;
                   v.layer.borderWidth = 1.0;
-                  v.layer.borderColor = [c colorWithAlphaComponent:MIN(1.0, op + 0.4)].CGColor;
+                  v.layer.borderColor = cs.CGColor;
               } else {
                   v.backgroundColor   = [UIColor clearColor];
                   v.layer.borderWidth = 0.0;
@@ -1166,6 +1175,8 @@ jobs:
                       <string>0.30</string>
                       <key>validValues</key>
                       <array>
+                          <string>0.00</string>
+                          <string>0.05</string>
                           <string>0.10</string>
                           <string>0.15</string>
                           <string>0.20</string>
@@ -1178,6 +1189,8 @@ jobs:
                       </array>
                       <key>validTitles</key>
                       <array>
+                          <string>0%（完全透明，仍可点击）</string>
+                          <string>5%</string>
                           <string>10%（几乎看不见）</string>
                           <string>15%</string>
                           <string>20%</string>
@@ -1269,9 +1282,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>2.0.0</string>
+              <string>2.0.1</string>
               <key>CFBundleVersion</key>
-              <string>2.0.0</string>
+              <string>2.0.1</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -1510,6 +1523,8 @@ jobs:
                       <string>0.30</string>
                       <key>validValues</key>
                       <array>
+                          <string>0.00</string>
+                          <string>0.05</string>
                           <string>0.10</string>
                           <string>0.15</string>
                           <string>0.20</string>
@@ -1522,6 +1537,8 @@ jobs:
                       </array>
                       <key>validTitles</key>
                       <array>
+                          <string>0%（完全透明，仍可点击）</string>
+                          <string>5%</string>
                           <string>10%（几乎看不见）</string>
                           <string>15%</string>
                           <string>20%</string>
