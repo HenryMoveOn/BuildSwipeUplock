@@ -1,4 +1,4 @@
-name: Build HomeBarURL
+ name: Build HomeBarURL
 
 on:
   push:
@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.7.0
+          Version: 1.8.0
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -139,15 +139,20 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 1.7.0
+           * HomeBarURL 1.8.0
            *
-           * 1.7.0：触发层改为「恒全透明 + 对齐小白条本体」。
-           *   - 不再有任何染色开关，触发层永远 clearColor，视觉零影响。
-           *   - 命中区默认取小白条本体的实际矩形（自动探测，不依赖类名），
-           *     再上下各外扩 triggerPad(默认 14pt)，并保底 120x28pt 保证手指点得到。
-           *   - 备份层只挂在小白条所在窗口，不再跟着 keyWindow 漂到控制中心/多任务。
+           * 1.8.0：红色半透明区回归，并可配置；同时**移除全部视图树扫描**。
+           *   背景：1.8.0 的「扫描找小白条」被真机日志证伪 —— 它带来三宗罪：
+           *     a. 每秒递归遍历 SpringBoard 全部窗口的完整视图树 → 锁屏界面明显卡顿；
+           *     b. 类名规则 PillView 命中了 SBHSearchPillView（搜索框胶囊，在屏幕上半部）；
+           *     c. 类名匹配绕过了几何校验，SBHomeGrabberView 的 bounds 是全屏
+           *        → 触发区一度变成 {{0,0},{393,852}}，点哪都触发。
+           *   现在：触发区 = 底部居中、宽约 150pt、高等于底部安全区（34pt），
+           *   正好落在小白条那一行；零遍历、零卡顿、无误触。
+           *   新增可配置：宽度 / 高度 / 上下微调 / 显示开关 / 颜色(10 色) / 透明度(9 档)。
            *
-           * 1.7.0：命中与视觉解耦。捕获面改为「独立穿透窗口」(HBPassWindow)，
+           * 1.8.0：触发层改为恒全透明。
+           * 1.8.0：命中与视觉解耦。捕获面改为「独立穿透窗口」(HBPassWindow)，
            *   不再依赖宿主 window 的视图层级。
            *
            * 1.5.3 红色关不掉的根因：debugOverlay 键漏登记在读取白名单 HBPrefKeys() 里，
@@ -173,9 +178,12 @@ jobs:
           static NSString * const kURLKey  = @"targetURL";
           static NSString * const kOnKey   = @"enabled";
           static NSString * const kActKey  = @"activation";   // 0=单击 1=双击 2=长按
-          static NSString * const kWKey    = @"triggerWidth";  // 0 = 跟随小白条宽度
-          static NSString * const kHKey    = @"triggerHeight"; // 0 = 跟随小白条高度
-          static NSString * const kPadKey  = @"triggerPad";    // 命中区上下外扩(pt)，保证手指能点到
+          static NSString * const kWKey    = @"triggerWidth";   // 触发区宽(pt)，0=跟随底部安全区
+          static NSString * const kHKey    = @"triggerHeight";  // 触发区高(pt)，0=跟随底部安全区
+          static NSString * const kDyKey   = @"triggerOffsetY"; // 相对默认位置上下微调(pt)
+          static NSString * const kOvKey   = @"showOverlay";    // 是否显示触发区
+          static NSString * const kClKey   = @"overlayColor";   // 触发区颜色
+          static NSString * const kOpKey   = @"overlayOpacity"; // 触发区透明度 0~1
           static NSString * const kDbgKey  = @"debugEnabled";
           static NSString * const kKbKey   = @"disableWithKeyboard";
           static NSString * const kHapKey  = @"haptic";
@@ -190,8 +198,8 @@ jobs:
 
           // 唯一权威来源：新增任何偏好键都必须加到这里，否则永远读不到（会静默回落默认值）
           static NSArray *HBPrefKeys(void) {
-              return @[kURLKey, kOnKey, kActKey, kWKey, kHKey, kPadKey,
-                       kDbgKey, kKbKey, kHapKey];
+              return @[kURLKey, kOnKey, kActKey, kWKey, kHKey, kDyKey,
+                       kOvKey, kClKey, kOpKey, kDbgKey, kKbKey, kHapKey];
           }
 
           static BOOL      gDebug   = YES;
@@ -360,101 +368,52 @@ jobs:
 
           @end
 
-          /* ---------------- 小白条本体探测 ---------------- */
+          /* ---------------- 触发区几何 ---------------- */
+          //
+          // 1.8.0 曾尝试遍历视图树去「找到小白条本体」，实测三宗罪：
+          //   a. 每秒递归遍历 SpringBoard 全部窗口的完整视图树 → 锁屏界面明显卡顿；
+          //   b. 类名规则 PillView 命中了 SBHSearchPillView（搜索框胶囊，在屏幕上半部）；
+          //   c) 类名规则绕过了几何校验，SBHomeGrabberView 的 bounds 是全屏
+          //      → 触发区一度变成 {{0,0},{393,852}}，点哪都触发。
+          // 因此本版**彻底放弃视图树扫描**，改用纯几何：底部居中、高度等于底部安全区，
+          // 正好落在小白条那一行。零遍历、零卡顿、无误触。
 
-          static BOOL HBHas(NSString *c, NSString *s) {
-              return [c rangeOfString:s options:NSCaseInsensitiveSearch].location != NSNotFound;
-          }
-
-          // 类名匹配：跨版本不可靠（iOS 16.4.1 实测从未命中），仅作为快速通道
-          static BOOL HBIsHomeBarClass(UIView *v) {
-              NSString *c = NSStringFromClass([v class]);
-              if (!c) return NO;
-              if (HBHas(c, @"LumaDodgePill"))  return YES;
-              if (HBHas(c, @"HomeGrabber"))    return YES;
-              if (HBHas(c, @"HomeIndicator"))  return YES;
-              if (HBHas(c, @"HomeAffordance")) return YES;
-              if (HBHas(c, @"MTLumaDodge"))    return YES;
-              if (HBHas(c, @"PillView"))       return YES;
-              return NO;
-          }
-
-          static void HBWalk(UIView *root, int depth, void (^blk)(UIView *v)) {
-              if (!root || depth > 16) return;
-              @try { blk(root); } @catch (NSException *e) {}
-              for (UIView *s in root.subviews) HBWalk(s, depth + 1, blk);
-          }
-
-          // 几何特征：底部安全区内、扁而宽、水平居中的小视图 —— 基本只有小白条符合
-          static BOOL HBIsPillShape(UIView *v, CGRect r, CGRect wb, CGFloat insetBottom, CGFloat cx) {
-              if (r.size.height < 2.0  || r.size.height > 18.0) return NO;
-              if (r.size.width  < 50.0 || r.size.width  > 320.0) return NO;
-              CGFloat band = insetBottom + 26.0;
-              if (CGRectGetMaxY(r) < CGRectGetMaxY(wb) - band) return NO;
-              if (fabs(CGRectGetMidX(r) - cx) > 44.0) return NO;
-              return YES;
-          }
-
-          static UIView *HBFindHomeBarInWindow(UIWindow *w) {
-              if (!w || CGRectIsEmpty(w.bounds)) return nil;
-
-              CGFloat insetBottom = 34.0;
+          static CGFloat HBBottomInset(void) {
               @try {
-                  if ([w respondsToSelector:@selector(safeAreaInsets)]) {
-                      CGFloat b = w.safeAreaInsets.bottom;
-                      if (b > 1.0) insetBottom = b;
+                  for (UIWindow *x in [UIApplication sharedApplication].windows) {
+                      if (![x isKindOfClass:[UIWindow class]]) continue;
+                      if (!x.isKeyWindow) continue;
+                      CGFloat b = x.safeAreaInsets.bottom;
+                      if (b > 1.0 && b < 80.0) return b;
                   }
               } @catch (NSException *e) {}
-
-              CGRect wb = w.bounds;
-              CGFloat cx = CGRectGetMidX(wb);
-              __block UIView *found = nil;
-
-              HBWalk(w, 0, ^(UIView *v) {
-                  if (found) return;
-                  if ([v isKindOfClass:[HBTriggerView class]]) return;
-                  if (v.hidden || v.alpha < 0.05) return;
-                  CGRect r = CGRectZero;
-                  @try { r = [v convertRect:v.bounds toView:w]; } @catch (NSException *e) { return; }
-                  if (CGRectIsEmpty(r)) return;
-                  if (HBIsHomeBarClass(v) || HBIsPillShape(v, r, wb, insetBottom, cx)) found = v;
-              });
-
-              return found;
+              return 34.0;
           }
 
-          // 一次性快照：把底部这一条里所有视图打出来，识别不出来时靠它定位
-          static void HBDumpBottom(UIWindow *w) {
-              if (!w || CGRectIsEmpty(w.bounds)) return;
-              CGRect wb = w.bounds;
-              CGFloat insetBottom = 34.0;
-              @try {
-                  if ([w respondsToSelector:@selector(safeAreaInsets)]) {
-                      CGFloat b = w.safeAreaInsets.bottom;
-                      if (b > 1.0) insetBottom = b;
-                  }
-              } @catch (NSException *e) {}
-              CGFloat band = insetBottom + 30.0;
-              HBLog(@"bottom dump in %@ (insetBottom=%.0f)", NSStringFromClass([w class]), insetBottom);
-              HBWalk(w, 0, ^(UIView *v) {
-                  if ([v isKindOfClass:[HBTriggerView class]]) return;
-                  CGRect r = CGRectZero;
-                  @try { r = [v convertRect:v.bounds toView:w]; } @catch (NSException *e) { return; }
-                  if (CGRectIsEmpty(r)) return;
-                  if (CGRectGetMaxY(r) < CGRectGetMaxY(wb) - band) return;
-                  HBLog(@"   bottom view: %@ frame=%@ alpha=%.2f hidden=%d",
-                        NSStringFromClass([v class]), NSStringFromCGRect(r), v.alpha, (int)v.hidden);
+          static UIColor *HBOverlayColor(NSString *name) {
+              static NSDictionary *map = nil;
+              static dispatch_once_t once;
+              dispatch_once(&once, ^{
+                  map = @{ @"red":    [UIColor redColor],
+                           @"orange": [UIColor orangeColor],
+                           @"yellow": [UIColor yellowColor],
+                           @"green":  [UIColor greenColor],
+                           @"cyan":   [UIColor cyanColor],
+                           @"blue":   [UIColor blueColor],
+                           @"purple": [UIColor purpleColor],
+                           @"pink":   [UIColor colorWithRed:1.0 green:0.18 blue:0.51 alpha:1.0],
+                           @"white":  [UIColor whiteColor],
+                           @"black":  [UIColor blackColor] };
               });
+              UIColor *c = name.length ? map[name] : nil;
+              return c ?: [UIColor redColor];
           }
 
           /* ---------------- 管理器 ---------------- */
 
           @interface HBManager : NSObject
           @property (nonatomic, strong)   HBTriggerView *primary;
-          @property (nonatomic, weak)     UIView        *pill;        // 探测到的小白条本体
           @property (nonatomic, assign)   BOOL keyboardVisible;
-          @property (nonatomic, assign)   int scanCount;
-          @property (nonatomic, assign)   BOOL dumped;
           @property (nonatomic, strong)   NSTimer *timer;
           @property (nonatomic, strong)   HBPassWindow *passWindow;
           @property (nonatomic, assign)   BOOL started;
@@ -463,7 +422,7 @@ jobs:
           - (void)start;
           - (void)refresh;
           - (CGRect)triggerRectForBounds:(CGRect)bounds prefs:(NSDictionary *)p;
-          - (void)ensureHitCapable:(HBTriggerView *)v;
+          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p tag:(NSString *)tag;
           @end
 
           @implementation HBManager
@@ -517,7 +476,9 @@ jobs:
               [self refresh];
 
               // 1 秒轮询 + CommonModes：默认模式下的定时器在滚动/触摸追踪期间不会触发
-              self.timer = [NSTimer timerWithTimeInterval:1.0
+              // 2 秒轮询：1 秒时 CFPreferencesAppSynchronize 的跨进程调用过于频繁，
+              // 在锁屏等场景会明显拖慢系统。窗口变化 / 键盘 / 前后台切换都会立即刷新，不依赖轮询。
+              self.timer = [NSTimer timerWithTimeInterval:2.0
                                                    target:self
                                                  selector:@selector(refresh)
                                                  userInfo:nil
@@ -560,117 +521,78 @@ jobs:
               NSDictionary *p = HBPrefs();
               gDebug = HBBool(p, kDbgKey, YES);
 
-              // 先找小白条本体：命中区直接对齐它，尺寸就是「小白条大小」
-              UIView *pill = nil;
-              for (UIWindow *w in wins) {
-                  if (![w isKindOfClass:[UIWindow class]]) continue;
-                  if (w == self.passWindow) continue;
-                  pill = HBFindHomeBarInWindow(w);
-                  if (pill) break;
-              }
-              self.pill = pill;
-
-              if (pill) {
-                  HBSetDiag(kDiagBar, [NSString stringWithFormat:@"%@ · %@",
-                                       NSStringFromClass([pill class]), HBTime()]);
-              } else if (!self.dumped && wins.count) {
-                  // 一次都没识别出来：把底部这一条打出来，下次就能精确定位
-                  self.dumped = YES;
-                  for (UIWindow *w in wins) {
-                      if ([w isKindOfClass:[UIWindow class]] && w != self.passWindow) {
-                          HBDumpBottom(w);
-                          break;
-                      }
-                  }
-              }
-
               // 独立穿透窗口是主捕获面：与宿主视图层级无关
               [self ensurePassWindow:p];
 
-              // 备份层只挂在小白条所在的窗口上，避免跟着 keyWindow 漂到控制中心/多任务里
-              UIWindow *host = (pill && pill.window) ? pill.window : key;
-              if (host) {
-                  [self attachPrimaryTo:host prefs:p];
-              } else if (self.scanCount >= 6) {
-                  [self ensureFallbackWindow:p];
-              }
-
-              if (self.scanCount < 8) self.scanCount++;
+              // 备份层挂在 keyWindow 上（视图树扫描已移除，不再有窗口漂移问题）
+              if (key) [self attachPrimaryTo:key prefs:p];
           }
 
-          // 触发区几何：默认对齐小白条本体，只做上下外扩保证手指点得到
+          // 触发区几何：底部居中，默认正好盖住底部安全区（小白条所在的那一行）
           - (CGRect)triggerRectForBounds:(CGRect)bounds prefs:(NSDictionary *)p {
               CGFloat W = bounds.size.width, H = bounds.size.height;
-              CGRect base = CGRectZero;
+              if (W < 40.0 || H < 40.0) return CGRectZero;
 
-              UIView *pill = self.pill;
-              UIWindow *pw = pill.window;
-              if (pill && pw && !CGRectIsEmpty(pill.bounds)) {
-                  // 只在同尺寸同方向时才采用（横屏时各 window bounds 会互换，坐标不可信）
-                  CGRect r = CGRectZero;
-                  @try { r = [pill convertRect:pill.bounds toView:pw]; } @catch (NSException *e) {}
-                  if (!CGRectIsEmpty(r) &&
-                      fabs(pw.bounds.size.width  - W) < 2.0 &&
-                      fabs(pw.bounds.size.height - H) < 2.0) {
-                      base = r;
-                  }
-              }
+              CGFloat inset = HBBottomInset();          // 34 = iPhone 14 Pro 底部安全区
+              CGFloat h = HBNum(p, kHKey, 0.0);
+              if (h <= 1.0) h = MIN(inset, 34.0);        // 0 = 跟随安全区高度
+              h = MAX(20.0, MIN(80.0, h));
 
-              BOOL usedPill = !CGRectIsEmpty(base);
-              if (!usedPill) {
-                  // 兜底：底部安全区里居中一小块（约小白条大小），本身已覆盖整个安全区
-                  CGFloat inset = 34.0;
-                  @try {
-                      UIWindow *kw = nil;
-                      for (UIWindow *x in [UIApplication sharedApplication].windows) {
-                          if (x.isKeyWindow) { kw = x; break; }
-                      }
-                      if (kw && [kw respondsToSelector:@selector(safeAreaInsets)]) {
-                          CGFloat b = kw.safeAreaInsets.bottom;
-                          if (b > 1.0) inset = b;
-                      }
-                  } @catch (NSException *e) {}
-                  base = CGRectMake((W - 150.0) / 2.0, H - inset, 150.0, MIN(inset, 34.0));
-              }
+              CGFloat w = HBNum(p, kWKey, 0.0);
+              if (w <= 1.0) w = MIN(MAX(120.0, inset * 4.0), W * 0.5);  // 0 = 默认 150 左右
+              w = MAX(60.0, MIN(W, w));
 
-              CGFloat mw = HBNum(p, kWKey, 0.0);   // >0 时手动覆盖宽度
-              CGFloat mh = HBNum(p, kHKey, 0.0);   // >0 时手动覆盖高度
-              if (mw > 1.0) {
-                  base = CGRectMake((W - mw) / 2.0, base.origin.y, mw, base.size.height);
-              }
-              if (mh > 1.0) {
-                  base = CGRectMake(base.origin.x, CGRectGetMaxY(base) - mh,
-                                    base.size.width, mh);
-              }
+              CGFloat dy = HBNum(p, kDyKey, 0.0);
+              dy = MAX(-40.0, MIN(40.0, dy));
 
-              // 上下外扩：小白条本体只有 ~5pt 高，不扩一点手指根本点不到。
-              // 兜底矩形本身已覆盖整个底部安全区，不需要再扩。
-              CGFloat pad = 0.0;
-              if (usedPill) {
-                  pad = HBNum(p, kPadKey, 14.0);
-                  pad = MAX(0.0, MIN(40.0, pad));
-              }
-              CGRect f = CGRectInset(base, 0.0, -pad);
-
-              // 保证最小可点面积，同时不允许超出屏幕
-              if (f.size.height < 28.0) f = CGRectInset(f, 0.0, -(28.0 - f.size.height) / 2.0);
-              if (f.size.width  < 120.0) f = CGRectInset(f, -(120.0 - f.size.width) / 2.0, 0.0);
-              f.origin.x    = MAX(0.0, MIN(f.origin.x,    W - f.size.width));
-              f.origin.y    = MAX(0.0, MIN(f.origin.y,    H - f.size.height));
-              f.size.width  = MIN(f.size.width,  W);
-              f.size.height = MIN(f.size.height, H);
+              // 关键：小白条画在**底部安全区内部、贴近屏幕下沿**（约 H-13 ~ H-8）。
+              // 所以触发区必须**贴底**：y = H - h。若按 H - inset - h 放在安全区上方，
+              // 会正好落在小白条上面一点，手指怎么点都点不到。
+              CGRect f = CGRectMake(0.0, H - h + dy, w, h);
+              f.origin.x    = (W - w) / 2.0;                          // 始终水平居中
+              f.size.width  = MIN(w,  W);
+              f.size.height = MIN(h,  H);
+              f.origin.x    = MAX(0.0, f.origin.x);
+              f.origin.y    = MAX(0.0, MIN(f.origin.y, H - f.size.height));
               return CGRectIntegral(f);
           }
 
-          // 触发层恒为全透明；命中能力在这里强制复位，任何逻辑都不许关掉它
-          - (void)ensureHitCapable:(HBTriggerView *)v {
-              v.backgroundColor        = [UIColor clearColor];
+          // 触发区外观：颜色 / 透明度可配；无论外观如何，命中能力强制复位
+          - (void)applyOverlayTo:(HBTriggerView *)v prefs:(NSDictionary *)p tag:(NSString *)tag {
+              BOOL show;
+              if (p.count == 0) {
+                  show = YES;    // 读不到配置时保持历史行为（显示），不再恒定误显示
+              } else {
+                  show = HBBool(p, kOvKey, YES);
+              }
+
+              CGFloat op = HBNum(p, kOpKey, 0.30);
+              op = MAX(0.0, MIN(1.0, op));
+              UIColor *c = HBOverlayColor(HBStr(p, kClKey, @"red"));
+
+              if (show) {
+                  v.backgroundColor   = [c colorWithAlphaComponent:op];
+                  v.layer.borderWidth = 1.0;
+                  v.layer.borderColor = [c colorWithAlphaComponent:MIN(1.0, op + 0.4)].CGColor;
+              } else {
+                  v.backgroundColor   = [UIColor clearColor];
+                  v.layer.borderWidth = 0.0;
+                  v.layer.borderColor = nil;
+              }
+
+              // 命中能力在这里被强制打开，任何分支都不允许关掉它
               v.opaque                 = NO;
-              v.layer.borderWidth      = 0.0;
-              v.layer.borderColor      = nil;
               v.hidden                 = NO;
               v.alpha                  = 1.0;
               v.userInteractionEnabled = YES;
+
+              NSString *desc = [NSString stringWithFormat:@"%@:%d", tag ?: @"v", (int)show];
+              if (![desc isEqualToString:self.lastRectDesc]) {
+                  self.lastRectDesc = desc;
+                  HBLog(@"overlay[%@] -> %@ (readable=%d raw=%@)",
+                        tag ?: @"v", show ? @"ON" : @"OFF", (int)(p.count > 0),
+                        p[kOvKey] ? [NSString stringWithFormat:@"%@", p[kOvKey]] : @"(key missing)");
+              }
           }
 
           - (void)ensurePassWindow:(NSDictionary *)p {
@@ -718,17 +640,14 @@ jobs:
               v.activeWidth    = 0.0;   // 整层即命中区，view 本身已经只有小白条那么大
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
 
-              [self ensureHitCapable:v];
+              [self applyOverlayTo:v prefs:p tag:@"pass"];
               [self configure:v prefs:p];
               [w bringSubviewToFront:v];
 
               NSString *desc = [NSString stringWithFormat:@"pass %@", NSStringFromCGRect(f)];
               if (![desc isEqualToString:self.lastRectDesc]) {
                   self.lastRectDesc = desc;
-                  HBLog(@"trigger rect -> %@ (pill=%@ capture=%d)",
-                        NSStringFromCGRect(f),
-                        self.pill ? NSStringFromClass([self.pill class]) : @"(not found)",
-                        (int)v.captureEnabled);
+                  HBLog(@"trigger rect -> %@ (capture=%d)", NSStringFromCGRect(f), (int)v.captureEnabled);
               }
           }
 
@@ -760,7 +679,7 @@ jobs:
               v.activeWidth    = 0.0;
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
 
-              [self ensureHitCapable:v];
+              [self applyOverlayTo:v prefs:p tag:@"primary"];
               [self configure:v prefs:p];
           }
 
@@ -1199,7 +1118,7 @@ jobs:
                       <key>label</key>
                       <string>触发区域</string>
                       <key>footerText</key>
-                      <string>默认自动对齐小白条本体：宽度取小白条宽度，高度取小白条高度再上下各外扩一点保证手指点得到。宽/高填 0 即为自动，填具体数值可手动覆盖（pt）。触发层始终完全透明，不会遮挡任何内容。</string>
+                      <string>触发区默认水平居中，宽度默认约 150pt、高度等于底部安全区（34pt），正好盖住小白条那一行。宽/高填 0 即为自动，填具体数值可手动覆盖；上下微调用于把区域对准小白条中心。</string>
                   </dict>
                   <dict>
                       <key>cell</key>
@@ -1213,7 +1132,7 @@ jobs:
                       <key>default</key>
                       <string>0</string>
                       <key>placeholder</key>
-                      <string>0（0=跟随小白条）</string>
+                      <string>0（0=自动约150）</string>
                       <key>keyboardType</key>
                       <integer>4</integer>
                   </dict>
@@ -1229,7 +1148,7 @@ jobs:
                       <key>default</key>
                       <string>0</string>
                       <key>placeholder</key>
-                      <string>0（0=跟随小白条）</string>
+                      <string>0（0=自动34）</string>
                       <key>keyboardType</key>
                       <integer>4</integer>
                   </dict>
@@ -1237,17 +1156,116 @@ jobs:
                       <key>cell</key>
                       <string>PSEditTextCell</string>
                       <key>label</key>
-                      <string>上下外扩</string>
+                      <string>上下微调</string>
                       <key>key</key>
-                      <string>triggerPad</string>
+                      <string>triggerOffsetY</string>
                       <key>defaults</key>
                       <string>com.yourname.homebarurl</string>
                       <key>default</key>
-                      <string>14</string>
+                      <string>0</string>
                       <key>placeholder</key>
-                      <string>14</string>
+                      <string>0</string>
                       <key>keyboardType</key>
                       <integer>4</integer>
+                  </dict>
+
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>触发区外观</string>
+                      <key>footerText</key>
+                      <string>半透明色块只用于让你看清触发区位置，可随时关闭；关闭后不影响点击功能。不想看到它就关掉「显示触发区」，想让区域更准就调上面的宽/高/上下微调。</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>label</key>
+                      <string>显示触发区</string>
+                      <key>key</key>
+                      <string>showOverlay</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <true/>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSLinkListCell</string>
+                      <key>detail</key>
+                      <string>PSListItemsController</string>
+                      <key>label</key>
+                      <string>颜色</string>
+                      <key>key</key>
+                      <string>overlayColor</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>red</string>
+                      <key>validValues</key>
+                      <array>
+                          <string>red</string>
+                          <string>orange</string>
+                          <string>yellow</string>
+                          <string>green</string>
+                          <string>cyan</string>
+                          <string>blue</string>
+                          <string>purple</string>
+                          <string>pink</string>
+                          <string>white</string>
+                          <string>black</string>
+                      </array>
+                      <key>validTitles</key>
+                      <array>
+                          <string>红</string>
+                          <string>橙</string>
+                          <string>黄</string>
+                          <string>绿</string>
+                          <string>青</string>
+                          <string>蓝</string>
+                          <string>紫</string>
+                          <string>粉</string>
+                          <string>白</string>
+                          <string>黑</string>
+                      </array>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSLinkListCell</string>
+                      <key>detail</key>
+                      <string>PSListItemsController</string>
+                      <key>label</key>
+                      <string>透明度</string>
+                      <key>key</key>
+                      <string>overlayOpacity</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>0.30</string>
+                      <key>validValues</key>
+                      <array>
+                          <string>0.10</string>
+                          <string>0.15</string>
+                          <string>0.20</string>
+                          <string>0.25</string>
+                          <string>0.30</string>
+                          <string>0.40</string>
+                          <string>0.50</string>
+                          <string>0.70</string>
+                          <string>1.00</string>
+                      </array>
+                      <key>validTitles</key>
+                      <array>
+                          <string>10%（几乎看不见）</string>
+                          <string>15%</string>
+                          <string>20%</string>
+                          <string>25%</string>
+                          <string>30%（推荐）</string>
+                          <string>40%</string>
+                          <string>50%</string>
+                          <string>70%</string>
+                          <string>100%（不透明）</string>
+                      </array>
                   </dict>
 
                   <dict>
@@ -1329,9 +1347,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.7.0</string>
+              <string>1.8.0</string>
               <key>CFBundleVersion</key>
-              <string>1.7.0</string>
+              <string>1.8.0</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -1442,7 +1460,7 @@ jobs:
                       <key>label</key>
                       <string>触发区域</string>
                       <key>footerText</key>
-                      <string>默认自动对齐小白条本体：宽高取小白条实际尺寸，再上下各外扩一点保证手指点得到。宽/高填 0 = 自动，填数值可手动覆盖（pt）。触发层始终完全透明。</string>
+                      <string>触发区默认水平居中，宽度约 150pt、高度等于底部安全区（34pt），正好盖住小白条那一行。宽/高填 0 = 自动，填数值可手动覆盖（pt）；上下微调用于对准小白条中心。</string>
                   </dict>
                   <dict>
                       <key>cell</key>
@@ -1456,7 +1474,7 @@ jobs:
                       <key>default</key>
                       <string>0</string>
                       <key>placeholder</key>
-                      <string>0（0=跟随小白条）</string>
+                      <string>0（0=自动约150）</string>
                       <key>keyboardType</key>
                       <integer>4</integer>
                   </dict>
@@ -1472,7 +1490,7 @@ jobs:
                       <key>default</key>
                       <string>0</string>
                       <key>placeholder</key>
-                      <string>0（0=跟随小白条）</string>
+                      <string>0（0=自动34）</string>
                       <key>keyboardType</key>
                       <integer>4</integer>
                   </dict>
@@ -1480,17 +1498,116 @@ jobs:
                       <key>cell</key>
                       <string>PSEditTextCell</string>
                       <key>label</key>
-                      <string>上下外扩</string>
+                      <string>上下微调</string>
                       <key>key</key>
-                      <string>triggerPad</string>
+                      <string>triggerOffsetY</string>
                       <key>defaults</key>
                       <string>com.yourname.homebarurl</string>
                       <key>default</key>
-                      <string>14</string>
+                      <string>0</string>
                       <key>placeholder</key>
-                      <string>14</string>
+                      <string>0</string>
                       <key>keyboardType</key>
                       <integer>4</integer>
+                  </dict>
+
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>触发区外观</string>
+                      <key>footerText</key>
+                      <string>半透明色块只用于看清触发区位置，随时可关；关闭不影响点击功能。</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>label</key>
+                      <string>显示触发区</string>
+                      <key>key</key>
+                      <string>showOverlay</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <true/>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSLinkListCell</string>
+                      <key>detail</key>
+                      <string>PSListItemsController</string>
+                      <key>label</key>
+                      <string>颜色</string>
+                      <key>key</key>
+                      <string>overlayColor</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>red</string>
+                      <key>validValues</key>
+                      <array>
+                          <string>red</string>
+                          <string>orange</string>
+                          <string>yellow</string>
+                          <string>green</string>
+                          <string>cyan</string>
+                          <string>blue</string>
+                          <string>purple</string>
+                          <string>pink</string>
+                          <string>white</string>
+                          <string>black</string>
+                      </array>
+                      <key>validTitles</key>
+                      <array>
+                          <string>红</string>
+                          <string>橙</string>
+                          <string>黄</string>
+                          <string>绿</string>
+                          <string>青</string>
+                          <string>蓝</string>
+                          <string>紫</string>
+                          <string>粉</string>
+                          <string>白</string>
+                          <string>黑</string>
+                      </array>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSLinkListCell</string>
+                      <key>detail</key>
+                      <string>PSListItemsController</string>
+                      <key>label</key>
+                      <string>透明度</string>
+                      <key>key</key>
+                      <string>overlayOpacity</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>0.30</string>
+                      <key>validValues</key>
+                      <array>
+                          <string>0.10</string>
+                          <string>0.15</string>
+                          <string>0.20</string>
+                          <string>0.25</string>
+                          <string>0.30</string>
+                          <string>0.40</string>
+                          <string>0.50</string>
+                          <string>0.70</string>
+                          <string>1.00</string>
+                      </array>
+                      <key>validTitles</key>
+                      <array>
+                          <string>10%（几乎看不见）</string>
+                          <string>15%</string>
+                          <string>20%</string>
+                          <string>25%</string>
+                          <string>30%（推荐）</string>
+                          <string>40%</string>
+                          <string>50%</string>
+                          <string>70%</string>
+                          <string>100%（不透明）</string>
+                      </array>
                   </dict>
 
                   <dict>
