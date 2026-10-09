@@ -34,18 +34,37 @@ jobs:
             mkdir -p "$HOME/theos/sdks"
             "$HOME/theos/bin/install-sdk" latest >> "$LOG" 2>&1
           fi
-          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
-          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
+          if [ ! -d "$HOME/theos/sdks/iPhoneOS16.5.sdk" ]; then
+            echo "### ensure iPhoneOS16.5 sdk explicitly" >> "$LOG"
+            "$HOME/theos/bin/install-sdk" iPhoneOS16.5 >> "$LOG" 2>&1 || true
+          fi
           echo "=== sdks ===" >> "$LOG"
           ls -la "$HOME/theos/sdks" >> "$LOG" 2>&1
-          if [ -z "$(ls -d "$HOME/theos/sdks"/iPhoneOS*.sdk 2>/dev/null)" ]; then
+          echo "=== toolchain ===" >> "$LOG"
+          ls "$HOME/theos/toolchain" >> "$LOG" 2>&1
+          SDK_DIR="$(ls -d "$HOME/theos/sdks"/iPhoneOS*.sdk 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$SDK_DIR" ]; then
             echo "INSTALL FAILED: no iPhoneOS sdk" >> "$LOG"
             exit 1
           fi
-          ls -la "$HOME/theos/sdks"
+          SDK_VER="$(basename "$SDK_DIR" .sdk)"
+          SDK_VER="${SDK_VER#iPhoneOS}"
+          echo "using SDK: $SDK_VER" >> "$LOG"
+          echo "SDKTARGET=iphone:clang:$SDK_VER:15.0" >> "$GITHUB_ENV"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "$HOME/theos/bin" >> "$GITHUB_PATH"
 
       - name: Ensure GNU make
-        run: brew install make || true
+        run: |
+          MAKE_BIN="$(brew --prefix)/opt/make/bin/gmake"
+          if [ ! -x "$MAKE_BIN" ]; then
+            brew install make 2>&1 | tee "$GITHUB_WORKSPACE/brew-make.log" || true
+          fi
+          if [ -x "$MAKE_BIN" ]; then
+            "$MAKE_BIN" --version 2>/dev/null | head -1 | tee "$GITHUB_WORKSPACE/make-version.txt" || true
+          else
+            echo "GMAKE MISSING - will fall back to system make" | tee "$GITHUB_WORKSPACE/make-version.txt" || true
+          fi
 
       - name: Generate tweak project
         run: |
@@ -53,7 +72,8 @@ jobs:
           mkdir -p HomeBarURL/HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences
           cd HomeBarURL
           cat > Makefile <<'EOF_MAKEFILE'
-          TARGET := iphone:clang:16.5:15.0
+          SDKTARGET ?= iphone:clang:16.5:15.0
+          TARGET := $(SDKTARGET)
           ARCHS = arm64e
           THEOS_PACKAGE_SCHEME = roothide
 
@@ -72,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.2
+          Version: 1.2.1
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -143,7 +163,6 @@ jobs:
           BUNDLE_NAME = HomeBarURLPrefs
 
           HomeBarURLPrefs_FILES = HomeBarURLPrefs.m
-          HomeBarURLPrefs_CFLAGS = -Wno-error
           HomeBarURLPrefs_INSTALL_PATH = /Library/PreferenceBundles
           HomeBarURLPrefs_FRAMEWORKS = UIKit
           HomeBarURLPrefs_PRIVATE_FRAMEWORKS = Preferences
@@ -234,9 +253,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.2</string>
+              <string>1.2.1</string>
               <key>CFBundleVersion</key>
-              <string>1.2</string>
+              <string>1.2.1</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -269,38 +288,64 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          cd HomeBarURL
           MAKE_BIN="$(brew --prefix)/opt/make/bin/gmake"
-          if [ ! -x "$MAKE_BIN" ]; then MAKE_BIN="make"; fi
-          "$MAKE_BIN" package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+          if [ ! -x "$MAKE_BIN" ]; then
+            echo "!!! gmake missing at build time" | tee build.log
+            MAKE_BIN="make"
+          fi
+          {
+            echo "===== DIAG ====="
+            echo "SDKTARGET=${SDKTARGET:-unset}"
+            echo "make: $("$MAKE_BIN" --version 2>/dev/null | head -1)"
+            ls -d "$THEOS/sdks"/iPhoneOS*.sdk 2>/dev/null || true
+            clang --version 2>&1 | head -2 || true
+            ls "$THEOS/toolchain" 2>/dev/null || true
+            echo "===== MAKE ====="
+          } 2>&1 | tee -a build.log
+          cd HomeBarURL
+          "$MAKE_BIN" package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee -a ../build.log
 
       - name: Save build log to ci-log branch
         if: always()
         continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set +e
           {
             echo "===== META ====="
             echo "run=$GITHUB_RUN_NUMBER sha=$GITHUB_SHA build_outcome=${{ steps.build.outcome }}"
             echo
-            echo "===== ERRORS / WARNINGS (filtered) ====="
-            grep -nE "error:|error |Error|undefined|ld: |make(\[[0-9]+\])?: \*\*\*|fatal|No such file|cannot|not found|failed" HomeBarURL/build.log 2>/dev/null | tail -n 120
+            echo "===== MAKE VERSION ====="
+            cat make-version.txt 2>/dev/null
             echo
-            echo "===== BUILD LOG TAIL (80) ====="
-            tail -n 80 HomeBarURL/build.log 2>/dev/null
+            echo "===== BREW MAKE LOG TAIL (20) ====="
+            tail -n 20 brew-make.log 2>/dev/null
             echo
             echo "===== DEB PRODUCED? ====="
-            ls -la HomeBarURL/packages/ 2>/dev/null
+            ls -la HomeBarURL/packages/ 2>/dev/null || true
             echo
-            echo "===== INSTALL LOG TAIL (30) ====="
-            tail -n 30 install.log 2>/dev/null
+            echo "===== INSTALL LOG TAIL (60) ====="
+            tail -n 60 install.log 2>/dev/null || true
+            echo
+            echo "===== BUILD LOG (full) ====="
+            cat build.log 2>/dev/null || true
           } > build-log.txt
           wc -c build-log.txt
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@users.noreply.github.com"
-          git checkout -B ci-log
-          git add -f build-log.txt
-          git commit -m "ci log [skip ci]" || true
-          git push -f origin ci-log || true
+          B64="$(base64 < build-log.txt | tr -d '\n')"
+          SHA="$(curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/build-log.txt?ref=ci-log" \
+            | grep '"sha"' | head -1 | sed -E 's/.*"sha": *"([^"]+)".*/\1/')"
+          if [ -n "$SHA" ]; then
+            PAYLOAD="{\"message\":\"ci log [skip ci]\",\"content\":\"$B64\",\"branch\":\"ci-log\",\"sha\":\"$SHA\"}"
+          else
+            PAYLOAD="{\"message\":\"ci log [skip ci]\",\"content\":\"$B64\",\"branch\":\"ci-log\"}"
+          fi
+          curl -sS -X PUT \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/build-log.txt" \
+            -d "$PAYLOAD" | head -c 500 || true
 
       - name: Upload deb
         if: steps.build.outcome == 'success'
