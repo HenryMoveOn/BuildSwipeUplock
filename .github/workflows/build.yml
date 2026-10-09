@@ -19,27 +19,35 @@ jobs:
       - name: 安装系统依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev libplist-utils curl git xz-utils
+          sudo apt-get install -y \
+            build-essential \
+            dpkg-dev \
+            libplist-utils \
+            libxml2-dev \
+            libssl-dev \
+            curl \
+            git \
+            xz-utils \
+            ldid
 
-      - name: 部署 Theos（含 RootHide 支持）
+      - name: 安装官方最新 Theos（原生支持 RootHide）
         run: |
           git clone --recursive https://github.com/theos/theos.git $THEOS
-          # 集成 RootHide 编译方案
-          git clone https://github.com/roothide/theos.git /tmp/roothide-theos
-          cp -rf /tmp/roothide-theos/* $THEOS/
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
 
-      - name: 配置 iOS 16.4 SDK
+      - name: 下载 iOS 16.4 SDK
         run: |
           mkdir -p $THEOS/sdks
-          curl -L "https://github.com/theos/sdks/releases/download/2024-02/iPhoneOS16.4.sdk.tar.xz" -o sdk.tar.xz
-          tar -xf sdk.tar.xz -C $THEOS/sdks/
+          curl -fL "https://github.com/theos/sdks/releases/download/2024-09/iPhoneOS16.4.sdk.tar.xz" -o $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz
+          tar -xf $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz -C $THEOS/sdks/
+          rm $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz
 
-      - name: 编译生成 DEB 包
+      - name: 编译 DEB 安装包
         run: |
           make clean
           make package FINALPACKAGE=1
 
-      - name: 上传安装包
+      - name: 上传成品
         uses: actions/upload-artifact@v4
         with:
           name: HomeBarURL-RootHide
