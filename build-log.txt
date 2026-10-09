@@ -1,5 +1,5 @@
 ===== META =====
-run=53 sha=62a034fa346fb9b76da17ee97fd8ddc66405e758 build_outcome=success
+run=54 sha=6c2da5db7f4fb2102a5dc5666c0c39e61dc96c7e build_outcome=success
 
 ===== MAKE VERSION =====
 GNU Make 4.4.1
@@ -21,12 +21,12 @@ to your PATH from your bashrc like:
 
 ===== DEB PRODUCED? =====
 total 80
-drwxr-xr-x  3 runner  staff     96 Oct  9 09:49 .
-drwxr-xr-x  9 runner  staff    288 Oct  9 09:49 ..
--rw-r--r--  1 runner  staff  40774 Oct  9 09:49 com.yourname.homebarurl_1.5.0_iphoneos-arm64e.deb
+drwxr-xr-x  3 runner  staff     96 Oct  9 10:10 .
+drwxr-xr-x  9 runner  staff    288 Oct  9 10:10 ..
+-rw-r--r--  1 runner  staff  40722 Oct  9 10:10 com.yourname.homebarurl_1.5.1_iphoneos-arm64e.deb
 
 ===== DEB CONTENTS (files actually inside .deb) =====
->> HomeBarURL/packages/com.yourname.homebarurl_1.5.0_iphoneos-arm64e.deb
+>> HomeBarURL/packages/com.yourname.homebarurl_1.5.1_iphoneos-arm64e.deb
 
 ===== KEY FILES IN BUILD TREE =====
   HomeBarURL/.theos/obj/HomeBarURLPrefs.bundle
@@ -73,7 +73,7 @@ x AppleTVOS12.4.sdk/usr/lib/libafc.tbd
 x AppleTVOS12.4.sdk/usr/lib/libcharset.1.tbd
 x AppleTVOS12.4.sdk/usr/lib/fdrtrustobject
 x AppleTVOS12.4.sdk/usr/lib/libncurses.tbd
-x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  2783k      0  0:00:02  0:00:02 --:--:-- 3838k
+x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  4127k      0  0:00:01  0:00:01 --:--:-- 5288k
 
 x AppleTVOS12.4.sdk/usr/lib/libiconv.tbd
 x AppleTVOS12.4.sdk/usr/lib/liblzma.tbd
@@ -106,9 +106,9 @@ x AppleTVOS12.4.sdk/Entitlements.plist
 install-theos rc=0
 === sdks ===
 total 0
-drwxr-xr-x   5 runner  staff  160 Oct  9 09:49 .
-drwxr-xr-x  22 runner  staff  704 Oct  9 09:48 ..
--rw-r--r--   1 runner  staff    0 Oct  9 09:48 .keep
+drwxr-xr-x   5 runner  staff  160 Oct  9 10:10 .
+drwxr-xr-x  22 runner  staff  704 Oct  9 10:10 ..
+-rw-r--r--   1 runner  staff    0 Oct  9 10:10 .keep
 drwxr-xr-x   6 runner  staff  192 Nov 23  2023 AppleTVOS12.4.sdk
 drwxr-xr-x   8 runner  staff  256 Nov 23  2023 iPhoneOS16.5.sdk
 === toolchain ===
@@ -163,5 +163,4 @@ ld: warning: -multiply_defined is obsolete
 [1;31m> [1;3;39mMaking stage in HomeBarURLPrefs…[m
 [1;31m> [1;3;39mMaking stage for bundle HomeBarURLPrefs…[m
 od: stdout: Broken pipe
-od: stdout: Broken pipe
-dm.pl: building package `com.yourname.homebarurl:iphoneos-arm64e' in `./packages/com.yourname.homebarurl_1.5.0_iphoneos-arm64e.deb'
+dm.pl: building package `com.yourname.homebarurl:iphoneos-arm64e' in `./packages/com.yourname.homebarurl_1.5.1_iphoneos-arm64e.deb'
