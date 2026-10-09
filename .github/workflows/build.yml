@@ -1,4 +1,4 @@
- name: Build HomeBarURL
+name: Build HomeBarURL
 
 on:
   push:
@@ -83,7 +83,7 @@ jobs:
 
           TWEAK_NAME = HomeBarURL
           HomeBarURL_FILES = Tweak.xm
-          HomeBarURL_CFLAGS = -fobjc-arc -Wno-error -Wno-deprecated-declarations
+          HomeBarURL_CFLAGS = -fobjc-arc -Wno-error -Wno-deprecated-declarations -Wno-unused-const-variable -Wno-unused-function
           HomeBarURL_FRAMEWORKS = UIKit QuartzCore CoreGraphics
 
           include $(THEOS_MAKE_PATH)/tweak.mk
@@ -191,7 +191,6 @@ jobs:
           // 遥测键：写进偏好域，设置面板里直接可见，不需要 Filza
           static NSString * const kDiagLoad    = @"diagLoad";
           static NSString * const kDiagOverlay = @"diagOverlay";
-          static NSString * const kDiagBar     = @"diagHomeBar";
           static NSString * const kDiagFire    = @"diagFire";
 
           static NSString * const kDefaultURL = @"taplink://trigger/DA426593-2DD3-4759-B23A-3ADB84B46213";
@@ -1955,6 +1954,57 @@ jobs:
           echo "=== icon files ==="
           ls -la "$BUNDLE_DIR"
 
+      - name: Preflight check
+        run: |
+          set +e
+          echo "===== PREFLIGHT ====="
+          cd "$GITHUB_WORKSPACE/HomeBarURL"
+          bad=0
+          if command -v plutil >/dev/null 2>&1; then
+            for p in $(find . -name '*.plist' 2>/dev/null); do
+              plutil -lint "$p" || { echo "!!! BAD PLIST: $p"; bad=1; }
+            done
+          else
+            echo "(plutil unavailable, skip plist lint)"
+          fi
+          cat > /tmp/hbcheck.py <<'PYCHK'
+          import re, sys
+          ok = True
+          for f in ('Tweak.xm', 'HomeBarURLPrefs/HomeBarURLPrefs.m'):
+              try:
+                  t = open(f, encoding='utf-8').read()
+              except Exception as e:
+                  print('!!! MISSING', f, e); ok = False; continue
+              s = re.sub(r'@"(\\.|[^"\\])*"', '""', t)
+              s = re.sub(r'/\*.*?\*/', '', s, flags=re.S)
+              s = '\n'.join(re.sub(r'//.*$', '', l) for l in s.split('\n'))
+              depth = 0
+              for i, l in enumerate(s.split('\n'), 1):
+                  t2 = l.strip()
+                  if t2.startswith(('@interface', '@implementation', '@protocol')):
+                      depth += 1
+                  elif t2 == '@end':
+                      depth -= 1
+                      if depth < 0:
+                          print('!!! EXTRA @end at line', i, 'in', f); ok = False; break
+              if depth > 0:
+                  print('!!! UNCLOSED @interface/@implementation in', f, 'depth', depth); ok = False
+              if s.count('{') != s.count('}'):
+                  print('!!! BRACE MISMATCH', f, s.count('{'), s.count('}')); ok = False
+              if s.count('(') != s.count(')'):
+                  print('!!! PAREN MISMATCH', f, s.count('('), s.count(')')); ok = False
+              print('checked', f)
+          sys.exit(0 if ok else 1)
+          PYCHK
+          python3 /tmp/hbcheck.py
+          [ $? -eq 0 ] || bad=1
+          echo "preflight bad=$bad"
+          if [ "$bad" -ne 0 ]; then
+            echo "===== PREFLIGHT FAILED ====="
+            exit 1
+          fi
+          echo "===== PREFLIGHT OK ====="
+
       - name: Build deb
         id: build
         continue-on-error: true
@@ -2045,4 +2095,11 @@ jobs:
 
       - name: Fail if build failed
         if: steps.build.outcome == 'failure'
-        run: exit 1
+        run: |
+          echo "==================== BUILD FAILED ===================="
+          echo "----- last 120 lines of build.log -----"
+          tail -n 120 build.log 2>/dev/null || echo "(no build.log)"
+          echo "----- deb produced? -----"
+          ls -la HomeBarURL/packages/ 2>/dev/null || echo "(no packages dir)"
+          echo "======================================================"
+          exit 1
