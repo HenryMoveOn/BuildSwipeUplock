@@ -4,10 +4,6 @@
 static NSString * const kSuiteName = @"com.yourname.homebarurl";
 static NSString * const kURLKey = @"targetURL";
 
-@interface UIView (HomeBarURL)
-- (void)homeBar_handleTap;
-@end
-
 %hook UIView
 
 - (void)didMoveToWindow {
@@ -30,6 +26,8 @@ static NSString * const kURLKey = @"targetURL";
     }
 }
 
+// 标记这是新增的方法，不是hook系统已有方法
+%new
 - (void)homeBar_handleTap {
     // 实时读取设置，修改后无需重启
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kSuiteName];
