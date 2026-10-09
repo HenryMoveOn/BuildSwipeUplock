@@ -1,0 +1,8 @@
+Package: com.yourname.homebarurl
+Name: HomeBarURL
+Version: 1.1
+Architecture: iphoneos-arm64e
+Description: 全局点击底部小白条打开自定义网址，支持系统设置修改
+Maintainer: Your Name
+Section: Tweaks
+Depends: mobilesubstrate, preferenceloader
