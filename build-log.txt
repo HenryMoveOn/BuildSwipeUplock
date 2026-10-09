@@ -1,5 +1,5 @@
 ===== META =====
-run=43 sha=46a3ebcd18d5a4931cd33c5e4caea64c8fc018da build_outcome=failure
+run=44 sha=5ebce39f779e9230f06fc85490bbedde3b642799 build_outcome=failure
 
 ===== MAKE VERSION =====
 GNU Make 4.4.1
@@ -42,7 +42,7 @@ x AppleTVOS12.4.sdk/usr/lib/libafc.tbd
 x AppleTVOS12.4.sdk/usr/lib/libcharset.1.tbd
 x AppleTVOS12.4.sdk/usr/lib/fdrtrustobject
 x AppleTVOS12.4.sdk/usr/lib/libncurses.tbd
-x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  3134k      0  0:00:01  0:00:01 --:--:-- 3693k
+x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  3355k      0  0:00:01  0:00:01 --:--:-- 3046k
 
 x AppleTVOS12.4.sdk/usr/lib/libiconv.tbd
 x AppleTVOS12.4.sdk/usr/lib/liblzma.tbd
@@ -75,9 +75,9 @@ x AppleTVOS12.4.sdk/Entitlements.plist
 install-theos rc=0
 === sdks ===
 total 0
-drwxr-xr-x   5 runner  staff  160 Oct  9 03:53 .
-drwxr-xr-x  22 runner  staff  704 Oct  9 03:53 ..
--rw-r--r--   1 runner  staff    0 Oct  9 03:53 .keep
+drwxr-xr-x   5 runner  staff  160 Oct  9 04:17 .
+drwxr-xr-x  22 runner  staff  704 Oct  9 04:17 ..
+-rw-r--r--   1 runner  staff    0 Oct  9 04:17 .keep
 drwxr-xr-x   6 runner  staff  192 Nov 23  2023 AppleTVOS12.4.sdk
 drwxr-xr-x   8 runner  staff  256 Nov 23  2023 iPhoneOS16.5.sdk
 === toolchain ===
