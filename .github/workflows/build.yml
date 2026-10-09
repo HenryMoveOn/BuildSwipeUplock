@@ -130,7 +130,7 @@ jobs:
               NSString *cls = NSStringFromClass(self.class);
               if (![cls containsString:@"LumaDodgePill"]) return;
 
-              static const char kGestureAddedKey;
+              static char kGestureAddedKey;
               if (objc_getAssociatedObject(self, &kGestureAddedKey)) return;
 
               self.userInteractionEnabled = YES;
