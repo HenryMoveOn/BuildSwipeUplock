@@ -1,5 +1,5 @@
 ===== META =====
-run=64 sha=c37215398195cbfe3ebb5a67e952e95c48b2f28e build_outcome=success
+run=65 sha=525038046026c220e776bf7c812a1ad9e16a1a2a build_outcome=success
 
 ===== MAKE VERSION =====
 GNU Make 4.4.1
@@ -21,9 +21,9 @@ to your PATH from your bashrc like:
 
 ===== DEB PRODUCED? =====
 total 88
-drwxr-xr-x  3 runner  staff     96 Oct  9 14:49 .
-drwxr-xr-x  9 runner  staff    288 Oct  9 14:49 ..
--rw-r--r--  1 runner  staff  43008 Oct  9 14:49 com.yourname.homebarurl_2.0.3_iphoneos-arm64e.deb
+drwxr-xr-x  3 runner  staff     96 Oct  9 23:11 .
+drwxr-xr-x  9 runner  staff    288 Oct  9 23:11 ..
+-rw-r--r--  1 runner  staff  43050 Oct  9 23:11 com.yourname.homebarurl_2.0.3_iphoneos-arm64e.deb
 
 ===== DEB CONTENTS (files actually inside .deb) =====
 >> HomeBarURL/packages/com.yourname.homebarurl_2.0.3_iphoneos-arm64e.deb
@@ -73,7 +73,7 @@ x AppleTVOS12.4.sdk/usr/lib/libafc.tbd
 x AppleTVOS12.4.sdk/usr/lib/libcharset.1.tbd
 x AppleTVOS12.4.sdk/usr/lib/fdrtrustobject
 x AppleTVOS12.4.sdk/usr/lib/libncurses.tbd
-x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  3190k      0  0:00:01  0:00:01 --:--:-- 4021k
+x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  3205k      0  0:00:01  0:00:01 --:--:-- 4363k
 
 x AppleTVOS12.4.sdk/usr/lib/libiconv.tbd
 x AppleTVOS12.4.sdk/usr/lib/liblzma.tbd
@@ -106,9 +106,9 @@ x AppleTVOS12.4.sdk/Entitlements.plist
 install-theos rc=0
 === sdks ===
 total 0
-drwxr-xr-x   5 runner  staff  160 Oct  9 14:48 .
-drwxr-xr-x  22 runner  staff  704 Oct  9 14:48 ..
--rw-r--r--   1 runner  staff    0 Oct  9 14:48 .keep
+drwxr-xr-x   5 runner  staff  160 Oct  9 23:10 .
+drwxr-xr-x  22 runner  staff  704 Oct  9 23:10 ..
+-rw-r--r--   1 runner  staff    0 Oct  9 23:10 .keep
 drwxr-xr-x   6 runner  staff  192 Nov 23  2023 AppleTVOS12.4.sdk
 drwxr-xr-x   8 runner  staff  256 Nov 23  2023 iPhoneOS16.5.sdk
 === toolchain ===
