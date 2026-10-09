@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.4.0
+          Version: 1.5.0
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -139,7 +139,7 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 1.4.0
+           * HomeBarURL 1.5.0
            *
            * 1.3.x 点不动的根因：ElleKit 的过滤器不认 Frameworks 键 → dylib 从未被注入。
            * 本版改用 Classes 命中所有加载了 UIKit 的进程，并内置遥测。
@@ -490,8 +490,8 @@ jobs:
               v.activeWidth    = HBNum(p, kWKey, 180.0);
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
 
-              // 调试染色：让触发层肉眼可见，用来判断「到底挂上没有」
-              if (HBBool(p, kTintKey, YES)) {
+              // 调试染色：让触发层肉眼可见，用来判断「到底挂上没有」（默认关闭，需要时在设置里打开）
+              if (HBBool(p, kTintKey, NO)) {
                   v.backgroundColor = [[UIColor redColor] colorWithAlphaComponent:0.30];
                   v.layer.borderWidth = 1.0;
                   v.layer.borderColor = [UIColor redColor].CGColor;
@@ -1100,9 +1100,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.4.0</string>
+              <string>1.5.0</string>
               <key>CFBundleVersion</key>
-              <string>1.4.0</string>
+              <string>1.5.0</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -1119,13 +1119,197 @@ jobs:
                   <string>PSLinkCell</string>
                   <key>icon</key>
                   <string>HomeBarURL.png</string>
-                  <key>isController</key>
-                  <true/>
                   <key>label</key>
                   <string>HomeBarURL</string>
               </dict>
               <key>title</key>
               <string>HomeBarURL</string>
+              <key>items</key>
+              <array>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>开关</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>label</key>
+                      <string>启用</string>
+                      <key>key</key>
+                      <string>enabled</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <true/>
+                  </dict>
+
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>目标</string>
+                      <key>footerText</key>
+                      <string>填写完整 URL / Scheme，必须带协议头。保存后立即生效，无需注销。</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSEditTextCell</string>
+                      <key>label</key>
+                      <string>网址</string>
+                      <key>key</key>
+                      <string>targetURL</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>taplink://trigger/DA426593-2DD3-4759-B23A-3ADB84B46213</string>
+                      <key>placeholder</key>
+                      <string>https:// 或 scheme://</string>
+                      <key>keyboardType</key>
+                      <integer>3</integer>
+                      <key>autocapitalizationType</key>
+                      <integer>0</integer>
+                      <key>autocorrectionType</key>
+                      <integer>0</integer>
+                  </dict>
+
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>触发方式</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSLinkListCell</string>
+                      <key>detail</key>
+                      <string>PSListItemsController</string>
+                      <key>label</key>
+                      <string>手势</string>
+                      <key>key</key>
+                      <string>activation</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <integer>0</integer>
+                      <key>validValues</key>
+                      <array>
+                          <integer>0</integer>
+                          <integer>1</integer>
+                          <integer>2</integer>
+                      </array>
+                      <key>validTitles</key>
+                      <array>
+                          <string>单击</string>
+                          <string>双击</string>
+                          <string>长按 0.35 秒</string>
+                      </array>
+                  </dict>
+
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>触发区域</string>
+                      <key>footerText</key>
+                      <string>以屏幕底部居中计算。宽度填 0 = 整条底边。默认 180 × 44pt。</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSEditTextCell</string>
+                      <key>label</key>
+                      <string>宽度</string>
+                      <key>key</key>
+                      <string>triggerWidth</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>180</string>
+                      <key>placeholder</key>
+                      <string>180（0=全宽）</string>
+                      <key>keyboardType</key>
+                      <integer>4</integer>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSEditTextCell</string>
+                      <key>label</key>
+                      <string>高度</string>
+                      <key>key</key>
+                      <string>triggerHeight</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <string>44</string>
+                      <key>placeholder</key>
+                      <string>44</string>
+                      <key>keyboardType</key>
+                      <integer>4</integer>
+                  </dict>
+
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>细节</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>label</key>
+                      <string>键盘弹出时禁用</string>
+                      <key>key</key>
+                      <string>disableWithKeyboard</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <true/>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>label</key>
+                      <string>触发时震动反馈</string>
+                      <key>key</key>
+                      <string>haptic</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <true/>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>label</key>
+                      <string>显示触发区域（红色）</string>
+                      <key>key</key>
+                      <string>debugOverlay</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <false/>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSSwitchCell</string>
+                      <key>label</key>
+                      <string>调试日志</string>
+                      <key>key</key>
+                      <string>debugEnabled</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>default</key>
+                      <true/>
+                  </dict>
+
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>footerText</key>
+                      <string>运行日志（SpringBoard）在 /var/mobile/Documents/HomeBarURL.log；配置实际存在于 /var/mobile/Library/Preferences/com.yourname.homebarurl.plist，均可用 Filza 查看。排查完毕后可关闭「调试日志」。</string>
+                  </dict>
+              </array>
           </dict>
           </plist>
           EOF_ENTRY
