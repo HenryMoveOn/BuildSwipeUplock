@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 2.0.3
+          Version: 2.0.4
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -129,8 +129,13 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 2.0.3
+           * HomeBarURL 2.0.4
            *
+           * 2.0.4：填充与边框透明度各新增 0.1%（0.001）一档，位于 0.01% 与 1% 之间。
+           *   **关键修复：2.0.3 漏了 bump 版本号**，包版本与 BUILD STAMP 都仍是 2.0.3。
+           *   APT 见到「同版本已安装」就不会替换 dylib —— 于是设置面板是新的（能看到新档位），
+           *   但真机上跑的还是旧 dylib（外观逻辑停留在把透明度直接写在命中层的旧版本），
+           *   表现就是「调到极低透明度后点击小白条没反应」。以后每版必须 bump 版本号。
            * 2.0.3：填充透明度新增 0.01 档；**边框透明度独立成一项** overlayBorderOpacity（默认 0.00 = 无边框）；
            *   启动日志加 [BUILD STAMP]，便于确认真机实际运行的版本。
            * 2.0.2：新增**独立显示层** HBTintView，命中层与显示层彻底分离 ——
@@ -472,7 +477,7 @@ jobs:
                     [[UIDevice currentDevice] systemVersion]);
 
               // 构建标记：一眼确认真机上跑的到底是哪个版本（防止装到旧包却以为改了没生效）
-              HBLog(@"[BUILD STAMP] HomeBarURL 2.0.3 | springboard-only | keys=%@", HBPrefKeys());
+              HBLog(@"[BUILD STAMP] HomeBarURL 2.0.4 | springboard-only | keys=%@", HBPrefKeys());
 
               HBSetDiag(kDiagLoad, [NSString stringWithFormat:@"已注入 %@ · iOS %@ · %@",
                                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(无 Bundle ID)",
@@ -1233,6 +1238,7 @@ jobs:
                       <array>
                           <string>0.00</string>
                           <string>0.0001</string>
+                          <string>0.001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1249,6 +1255,7 @@ jobs:
                       <array>
                           <string>0%（完全透明，仍可点击）</string>
                           <string>0.01%（几乎完全不可见）</string>
+                          <string>0.1%（极淡）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%（几乎看不见）</string>
@@ -1279,6 +1286,7 @@ jobs:
                       <array>
                           <string>0.00</string>
                           <string>0.0001</string>
+                          <string>0.001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1292,6 +1300,7 @@ jobs:
                       <array>
                           <string>0%（无边框，默认）</string>
                           <string>0.01%（几乎完全不可见）</string>
+                          <string>0.1%（极淡）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%</string>
@@ -1382,9 +1391,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>2.0.3</string>
+              <string>2.0.4</string>
               <key>CFBundleVersion</key>
-              <string>2.0.3</string>
+              <string>2.0.4</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -1625,6 +1634,7 @@ jobs:
                       <array>
                           <string>0.00</string>
                           <string>0.0001</string>
+                          <string>0.001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1641,6 +1651,7 @@ jobs:
                       <array>
                           <string>0%（完全透明，仍可点击）</string>
                           <string>0.01%（几乎完全不可见）</string>
+                          <string>0.1%（极淡）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%（几乎看不见）</string>
@@ -1671,6 +1682,7 @@ jobs:
                       <array>
                           <string>0.00</string>
                           <string>0.0001</string>
+                          <string>0.001</string>
                           <string>0.01</string>
                           <string>0.05</string>
                           <string>0.10</string>
@@ -1684,6 +1696,7 @@ jobs:
                       <array>
                           <string>0%（无边框，默认）</string>
                           <string>0.01%（几乎完全不可见）</string>
+                          <string>0.1%（极淡）</string>
                           <string>1%（几乎不可见）</string>
                           <string>5%</string>
                           <string>10%</string>
