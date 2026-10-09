@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.2.2
+          Version: 1.2.3
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -288,9 +288,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.2.2</string>
+              <string>1.2.3</string>
               <key>CFBundleVersion</key>
-              <string>1.2.2</string>
+              <string>1.2.3</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -581,6 +581,8 @@ jobs:
           EOF_ICON
           tr -d ' \t\n' < HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png.b64 | python3 -m base64 -d > HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png
           rm -f HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png.b64
+          mkdir -p HomeBarURLPrefs/layout/Library/PreferenceBundles/HomeBarURLPrefs.bundle
+          cp HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png HomeBarURLPrefs/layout/Library/PreferenceBundles/HomeBarURLPrefs.bundle/HomeBarURL.png
           echo "icon bytes: $(wc -c < HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png)"
 
       - name: Build deb
@@ -624,6 +626,14 @@ jobs:
             echo
             echo "===== DEB PRODUCED? ====="
             ls -la HomeBarURL/packages/ 2>/dev/null || true
+            echo
+            echo "===== DEB CONTENTS (files actually inside .deb) ====="
+            for d in HomeBarURL/packages/*.deb; do
+              [ -e "$d" ] && { echo ">> $d"; dpkg-deb -c "$d" 2>/dev/null | sed 's#^#  #'; } || true
+            done
+            echo
+            echo "===== KEY FILES IN BUILD TREE ====="
+            find HomeBarURL \( -name '*.bundle' -o -name 'HomeBarURLPrefs.plist' -o -name 'HomeBarURL.png' -o -name 'Root.plist' \) 2>/dev/null | sed 's#^#  #' || true
             echo
             echo "===== INSTALL LOG TAIL (60) ====="
             tail -n 60 install.log 2>/dev/null || true
