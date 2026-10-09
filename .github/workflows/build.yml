@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.5.3
+          Version: 1.6.0
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -139,7 +139,14 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 1.5.3
+           * HomeBarURL 1.6.0
+           *
+           * 1.6.0：命中与视觉解耦。捕获面改为「独立穿透窗口」(HBPassWindow)，
+           *   不再依赖宿主 window 的视图层级，也不再依赖触发层是否可见。
+           *   debugOverlay 开关现在只改颜色，绝不动 hidden/alpha/userInteractionEnabled。
+           *
+           * 1.5.3 红色关不掉的根因：debugOverlay 键漏登记在读取白名单 HBPrefKeys() 里，
+           *   导致永远读不到、恒定回落默认值 YES。
            *
            * 1.3.x 点不动的根因：ElleKit 的过滤器不认 Frameworks 键 → dylib 从未被注入。
            * 本版改用 Classes 命中所有加载了 UIKit 的进程，并内置遥测。
@@ -313,6 +320,39 @@ jobs:
               return [self pointInside:point withEvent:event] ? self : nil;
           }
 
+          // 命中诊断：只要摸到了触发层就一定留痕，用来区分「没摸到」和「摸到了但没打开」
+          - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+              HBLog(@"touch -> trigger (capture=%d frame=%@ win=%@)",
+                    (int)self.captureEnabled,
+                    NSStringFromCGRect(self.frame),
+                    NSStringFromClass([self.window class]));
+              [super touchesBegan:touches withEvent:event];
+          }
+
+          @end
+
+          /* ---------------- 独立穿透窗口：捕获面不再依赖宿主视图层级 ---------------- */
+
+          // 一个只吃「底部触发区」的透明窗口。命中之外的点一律返回 nil，
+          // 事件会穿透到下面的窗口，因此不会挡住 App 自己的任何操作。
+          // 好处：捕获能力不再依赖「宿主 window 里谁在最上层」，
+          // 也不再依赖触发层是否可见 —— 视觉与命中彻底解耦。
+          @interface HBPassWindow : UIWindow
+          @property (nonatomic, weak) HBTriggerView *trigger;
+          @end
+
+          @implementation HBPassWindow
+
+          - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+              if (self.hidden || self.alpha < 0.01 || !self.userInteractionEnabled) return nil;
+              HBTriggerView *t = self.trigger;
+              if (t && !t.hidden && t.alpha >= 0.01 && t.userInteractionEnabled) {
+                  CGPoint p = [self convertPoint:point toView:t];
+                  if ([t pointInside:p withEvent:event]) return t;
+              }
+              return nil;   // 交回给下面的窗口
+          }
+
           @end
 
           /* ---------------- 小白条本体探测（仅用于诊断 + 副触发层） ---------------- */
@@ -364,12 +404,13 @@ jobs:
           @property (nonatomic, assign)   BOOL keyboardVisible;
           @property (nonatomic, assign)   int scanCount;
           @property (nonatomic, strong)   NSTimer *timer;
-          @property (nonatomic, strong)   UIWindow *fallbackWindow;
+          @property (nonatomic, strong)   HBPassWindow *passWindow;
           @property (nonatomic, assign)   BOOL started;
-          @property (nonatomic, assign)   NSInteger lastTint;   // -1=未知 0=关 1=开
+          @property (nonatomic, strong)   NSString *lastTintDesc;  // "tag:0/1"，仅用于避免重复打日志
           + (instancetype)shared;
           - (void)start;
           - (void)refresh;
+          - (void)applyTintTo:(HBTriggerView *)v prefs:(NSDictionary *)p tag:(NSString *)tag;
           @end
 
           @implementation HBManager
@@ -384,7 +425,7 @@ jobs:
           - (void)start {
               if (self.started) return;
               self.started = YES;
-              self.lastTint = -1;
+              self.lastTintDesc = nil;
 
               NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
               if (dir) gLogPath = [dir stringByAppendingPathComponent:@"HomeBarURL.log"];
@@ -398,7 +439,7 @@ jobs:
               [nc addObserver:self selector:@selector(refresh) name:UIWindowDidBecomeKeyNotification object:nil];
               [nc addObserver:self selector:@selector(refresh) name:UIApplicationDidFinishLaunchingNotification object:nil];
               // 从「设置」切回来时立刻重新读配置，不用等下一次轮询
-              [nc addObserver:self selector:@selector(refresh) name:UIApplicationDidBecomeActiveNotification object:nil];
+              [nc addObserver:self selector:@selector(hbActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
 
               HBLog(@"===== loaded in %@ (iOS %@) =====",
                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(no bundle id)",
@@ -434,6 +475,16 @@ jobs:
           - (void)hbKeyboardShow:(NSNotification *)n { self.keyboardVisible = YES;  [self refresh]; }
           - (void)hbKeyboardHide:(NSNotification *)n { self.keyboardVisible = NO;   [self refresh]; }
 
+          // 回到前台时键盘必然已收起。若标记卡在 YES，触发层会被永久禁用 —— 这是历史上
+          // 「开关一关功能就没了」这类现象的常见来源之一，这里主动复位。
+          - (void)hbActive:(NSNotification *)n {
+              if (self.keyboardVisible) {
+                  self.keyboardVisible = NO;
+                  HBLog(@"keyboardVisible reset on active");
+              }
+              [self refresh];
+          }
+
           - (void)refresh {
               UIApplication *app = nil;
               @try { app = [UIApplication sharedApplication]; } @catch (NSException *e) { app = nil; }
@@ -456,10 +507,13 @@ jobs:
               NSDictionary *p = HBPrefs();
               gDebug = HBBool(p, kDbgKey, YES);
 
+              // 独立穿透窗口是主捕获面：与宿主视图层级、与触发层可见性都无关
+              [self ensurePassWindow:p];
+
+              // 宿主 window 上再挂一层做备份（覆盖穿透窗口被系统窗口盖住的极端情况）
               if (key) {
                   [self attachPrimaryTo:key prefs:p];
               } else if (self.scanCount >= 6) {
-                  // 兜底：进程里一个窗口都拿不到时，自建一个透明窗口承载触发层
                   [self ensureFallbackWindow:p];
               }
 
@@ -469,24 +523,95 @@ jobs:
               }
           }
 
-          - (void)ensureFallbackWindow:(NSDictionary *)p {
-              if (self.fallbackWindow) {
-                  [self attachPrimaryTo:self.fallbackWindow prefs:p];
+          // 染色：只改颜色，绝不动 hidden / alpha / userInteractionEnabled。
+          // 视觉与命中必须彻底解耦，否则「关掉红色」会连带把点击也关掉。
+          - (void)applyTintTo:(HBTriggerView *)v prefs:(NSDictionary *)p tag:(NSString *)tag {
+              BOOL tint;
+              if (p.count == 0) {
+                  tint = NO;   // 读不到配置时回落「关」，避免红色恒定且无法关闭
+              } else {
+                  tint = HBBool(p, kTintKey, YES);
+              }
+
+              if (tint) {
+                  v.backgroundColor = [[UIColor redColor] colorWithAlphaComponent:0.30];
+                  v.layer.borderWidth = 1.0;
+                  v.layer.borderColor = [UIColor redColor].CGColor;
+              } else {
+                  v.backgroundColor = [UIColor clearColor];
+                  v.layer.borderWidth = 0.0;
+                  v.layer.borderColor = nil;
+              }
+              // 命中相关的状态在这里绝不修改，方便对照日志确认解耦是否生效
+              v.hidden                 = NO;
+              v.alpha                  = 1.0;
+              v.userInteractionEnabled = YES;
+
+              NSString *desc = [NSString stringWithFormat:@"%@:%d", tag ?: @"v", (int)tint];
+              if (![desc isEqualToString:self.lastTintDesc]) {
+                  self.lastTintDesc = desc;
+                  HBLog(@"tint[%@] -> %@  (readable=%d raw=%@ capture=%d frame=%@)",
+                        tag ?: @"v", tint ? @"ON" : @"OFF", (int)(p.count > 0),
+                        p[kTintKey] ? [NSString stringWithFormat:@"%@", p[kTintKey]] : @"(key missing)",
+                        (int)v.captureEnabled, NSStringFromCGRect(v.frame));
+              }
+          }
+
+          - (void)ensurePassWindow:(NSDictionary *)p {
+              if (self.passWindow) {
+                  [self configurePassWindow:self.passWindow prefs:p];
                   return;
               }
               @try {
-                  UIWindow *w = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+                  HBPassWindow *w = [[HBPassWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
                   w.backgroundColor        = [UIColor clearColor];
+                  w.opaque                 = NO;
                   w.userInteractionEnabled = YES;
                   w.windowLevel            = UIWindowLevelNormal + 10.0;
-                  w.hidden                 = NO;
-                  self.fallbackWindow      = w;
-                  HBLog(@"fallback window created");
-                  HBSetDiag(kDiagOverlay, [NSString stringWithFormat:@"兜底自建窗口 · %@", HBTime()]);
-                  [self attachPrimaryTo:w prefs:p];
+                  // iOS 13+ 没有 windowScene 的 UIWindow 不会被显示，必须从已有窗口借用
+                  if ([w respondsToSelector:@selector(setWindowScene:)]) {
+                      for (UIWindow *x in [UIApplication sharedApplication].windows) {
+                          if (x.windowScene) { w.windowScene = x.windowScene; break; }
+                      }
+                  }
+                  HBTriggerView *v = [[HBTriggerView alloc] initWithFrame:CGRectZero];
+                  [w addSubview:v];
+                  w.trigger    = v;
+                  w.hidden     = NO;
+                  self.passWindow = w;
+                  HBLog(@"pass window created (level %.0f, bounds %@, scene=%@)",
+                        w.windowLevel, NSStringFromCGRect(w.bounds),
+                        w.windowScene ? @"yes" : @"NIL(可能不显示)");
+                  HBSetDiag(kDiagOverlay, [NSString stringWithFormat:@"独立捕获窗口已建立 · %@", HBTime()]);
+                  [self configurePassWindow:w prefs:p];
               } @catch (NSException *e) {
-                  HBLog(@"fallback window failed: %@", e);
+                  HBLog(@"pass window failed: %@", e);
               }
+          }
+
+          - (void)configurePassWindow:(HBPassWindow *)w prefs:(NSDictionary *)p {
+              HBTriggerView *v = w.trigger;
+              if (!v) return;
+
+              CGRect wb = w.bounds;
+              if (CGRectIsEmpty(wb)) return;
+
+              CGFloat h = HBNum(p, kHKey, 44.0);
+              h = MAX(20.0, MIN(120.0, h));
+              CGRect f = CGRectMake(0.0, CGRectGetMaxY(wb) - h, wb.size.width, h);
+              if (!CGRectEqualToRect(v.frame, f)) v.frame = f;
+
+              v.activeWidth    = HBNum(p, kWKey, 180.0);
+              v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
+
+              [self applyTintTo:v prefs:p tag:@"pass"];
+              [self configure:v prefs:p];
+              [w bringSubviewToFront:v];
+          }
+
+          - (void)ensureFallbackWindow:(NSDictionary *)p {
+              // 一个 window 都拿不到的进程里，独立穿透窗口本身就是兜底
+              [self ensurePassWindow:p];
           }
 
           - (void)attachPrimaryTo:(UIWindow *)w prefs:(NSDictionary *)p {
@@ -514,32 +639,8 @@ jobs:
               v.activeWidth    = HBNum(p, kWKey, 180.0);
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
 
-              // 调试染色：只有「确实读到了配置、且开关为开」才染红。
-              // 关键：读不到配置时（沙盒进程常见的 cfprefsd 不可达）绝不能回落成「开」，
-              // 否则红色永远关不掉 —— 这正是 1.5.1 的 bug。
-              BOOL tint;
-              if (p.count == 0) {
-                  tint = NO;
-              } else {
-                  tint = HBBool(p, kTintKey, YES);
-              }
-
-              if (tint != self.lastTint) {
-                  self.lastTint = tint;
-                  HBLog(@"tint -> %@  (prefsReadable=%d, raw=%@)",
-                        tint ? @"ON" : @"OFF", (int)(p.count > 0),
-                        p[kTintKey] ? [NSString stringWithFormat:@"%@", p[kTintKey]] : @"(key missing)");
-              }
-
-              if (tint) {
-                  v.backgroundColor = [[UIColor redColor] colorWithAlphaComponent:0.30];
-                  v.layer.borderWidth = 1.0;
-                  v.layer.borderColor = [UIColor redColor].CGColor;
-              } else {
-                  v.backgroundColor = [UIColor clearColor];
-                  v.layer.borderWidth = 0.0;
-                  v.layer.borderColor = nil;
-              }
+              // 只染色，命中相关状态由 applyTintTo 统一保证不被污染
+              [self applyTintTo:v prefs:p tag:@"primary"];
 
               [self configure:v prefs:p];
           }
@@ -1140,9 +1241,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.5.3</string>
+              <string>1.6.0</string>
               <key>CFBundleVersion</key>
-              <string>1.5.3</string>
+              <string>1.6.0</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
