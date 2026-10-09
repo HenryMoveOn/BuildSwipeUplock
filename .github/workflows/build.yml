@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.2.3
+          Version: 1.2.4
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -149,7 +149,7 @@ jobs:
               NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:kSuiteName];
               NSString *urlString = [defaults stringForKey:kURLKey];
               if (!urlString || urlString.length == 0) {
-                  urlString = @"https://www.example.com";
+                  urlString = @"taplink://trigger/DA426593-2DD3-4759-B23A-3ADB84B46213";
               }
               NSURL *url = [NSURL URLWithString:urlString];
               if (url) {
@@ -288,9 +288,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.2.3</string>
+              <string>1.2.4</string>
               <key>CFBundleVersion</key>
-              <string>1.2.3</string>
+              <string>1.2.4</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -303,19 +303,52 @@ jobs:
           <dict>
               <key>entry</key>
               <dict>
-                  <key>bundle</key>
-                  <string>HomeBarURLPrefs</string>
                   <key>cell</key>
                   <string>PSLinkCell</string>
-                  <key>detail</key>
-                  <string>HomeBarURLPrefsListController</string>
-                  <key>isController</key>
-                  <integer>1</integer>
                   <key>icon</key>
                   <string>HomeBarURL.png</string>
+                  <key>isController</key>
+                  <true/>
                   <key>label</key>
                   <string>HomeBarURL</string>
               </dict>
+              <key>title</key>
+              <string>HomeBarURL</string>
+              <key>items</key>
+              <array>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>label</key>
+                      <string>点击底部小白条打开以下网址</string>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSTextFieldCell</string>
+                      <key>label</key>
+                      <string>目标网址</string>
+                      <key>defaults</key>
+                      <string>com.yourname.homebarurl</string>
+                      <key>key</key>
+                      <string>targetURL</string>
+                      <key>default</key>
+                      <string>taplink://trigger/DA426593-2DD3-4759-B23A-3ADB84B46213</string>
+                      <key>placeholder</key>
+                      <string>输入完整网址</string>
+                      <key>keyboardType</key>
+                      <integer>3</integer>
+                      <key>autocapitalizationType</key>
+                      <integer>0</integer>
+                      <key>autocorrectionType</key>
+                      <integer>0</integer>
+                  </dict>
+                  <dict>
+                      <key>cell</key>
+                      <string>PSGroupCell</string>
+                      <key>footerText</key>
+                      <string>修改后立即生效，无需重启。</string>
+                  </dict>
+              </array>
           </dict>
           </plist>
           EOF_ENTRY
@@ -581,6 +614,7 @@ jobs:
           EOF_ICON
           tr -d ' \t\n' < HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png.b64 | python3 -m base64 -d > HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png
           rm -f HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png.b64
+          sips -z 58 58 HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png >/dev/null 2>&1 || true
           mkdir -p HomeBarURLPrefs/layout/Library/PreferenceBundles/HomeBarURLPrefs.bundle
           cp HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png HomeBarURLPrefs/layout/Library/PreferenceBundles/HomeBarURLPrefs.bundle/HomeBarURL.png
           echo "icon bytes: $(wc -c < HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png)"
@@ -638,8 +672,8 @@ jobs:
             echo "===== INSTALL LOG TAIL (60) ====="
             tail -n 60 install.log 2>/dev/null || true
             echo
-            echo "===== BUILD LOG (full) ====="
-            cat build.log 2>/dev/null || true
+            echo "===== BUILD LOG (last 150 lines) ====="
+            tail -n 150 build.log 2>/dev/null || true
           } > build-log.txt
           wc -c build-log.txt
           B64="$(base64 < build-log.txt | tr -d '\n')"
