@@ -84,7 +84,7 @@ jobs:
           TWEAK_NAME = HomeBarURL
           HomeBarURL_FILES = Tweak.xm
           HomeBarURL_CFLAGS = -fobjc-arc -Wno-error -Wno-deprecated-declarations
-          HomeBarURL_FRAMEWORKS = UIKit
+          HomeBarURL_FRAMEWORKS = UIKit QuartzCore CoreGraphics
 
           include $(THEOS_MAKE_PATH)/tweak.mk
           include $(THEOS_MAKE_PATH)/aggregate.mk
@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 1.3.0
+          Version: 1.4.0
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -107,6 +107,24 @@ jobs:
           <dict>
               <key>Filter</key>
               <dict>
+                  <!--
+                    ElleKit（Dopamine roothide 的注入框架）只识别
+                    Bundles / Classes / Executables / CoreFoundationVersion 四种键，
+                    完全不读 Frameworks —— 用 Frameworks 会导致 dylib 永远不被注入。
+                    这里用 Classes 命中所有加载了 UIKit 的进程（App + SpringBoard），
+                    各条之间是「或」关系；再显式补 SpringBoard 兜底。
+                  -->
+                  <key>Classes</key>
+                  <array>
+                      <string>UIApplication</string>
+                      <string>UIWindow</string>
+                      <string>UIView</string>
+                      <string>UIViewController</string>
+                  </array>
+                  <key>Bundles</key>
+                  <array>
+                      <string>com.apple.springboard</string>
+                  </array>
                   <key>Frameworks</key>
                   <array>
                       <string>UIKit</string>
@@ -121,9 +139,12 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 1.3.0
+           * HomeBarURL 1.4.0
            *
-           * 触发原理（1.2.x 点不动的根因）：
+           * 1.3.x 点不动的根因：ElleKit 的过滤器不认 Frameworks 键 → dylib 从未被注入。
+           * 本版改用 Classes 命中所有加载了 UIKit 的进程，并内置遥测。
+           *
+           * 触发原理（1.2.x 的老问题）：
            *  1. 小白条本体 MTLumaDodgePillView 只有 ~5pt 高，手指几乎不可能命中；
            *  2. 它所在的窗口可能是系统级窗口 / 祖先视图 userInteractionEnabled=NO，
            *     UIKit 的 hitTest 根本不会把触摸派发给它，加手势识别器等于没加；
@@ -145,6 +166,13 @@ jobs:
           static NSString * const kDbgKey  = @"debugEnabled";
           static NSString * const kKbKey   = @"disableWithKeyboard";
           static NSString * const kHapKey  = @"haptic";
+          static NSString * const kTintKey = @"debugOverlay";  // 调试用：把触发层染红，肉眼可见
+
+          // 遥测键：写进偏好域，设置面板里直接可见，不需要 Filza
+          static NSString * const kDiagLoad    = @"diagLoad";
+          static NSString * const kDiagOverlay = @"diagOverlay";
+          static NSString * const kDiagBar     = @"diagHomeBar";
+          static NSString * const kDiagFire    = @"diagFire";
 
           static NSString * const kDefaultURL = @"taplink://trigger/DA426593-2DD3-4759-B23A-3ADB84B46213";
 
@@ -172,6 +200,24 @@ jobs:
                   } else {
                       [line writeToFile:gLogPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
                   }
+              } @catch (NSException *e) {}
+          }
+
+          /* ---------------- 遥测（写进偏好域，设置面板可直读） ---------------- */
+
+          static NSString *HBTime(void) {
+              NSDateFormatter *f = [[NSDateFormatter alloc] init];
+              f.dateFormat = @"MM-dd HH:mm:ss";
+              return [f stringFromDate:[NSDate date]];
+          }
+
+          static void HBSetDiag(NSString *key, NSString *value) {
+              if (!key || !value) return;
+              @try {
+                  CFPreferencesSetAppValue((__bridge CFStringRef)key,
+                                           (__bridge CFPropertyListRef)value,
+                                           (__bridge CFStringRef)HBID);
+                  CFPreferencesAppSynchronize((__bridge CFStringRef)HBID);
               } @catch (NSException *e) {}
           }
 
@@ -312,6 +358,7 @@ jobs:
           @property (nonatomic, assign)   BOOL keyboardVisible;
           @property (nonatomic, assign)   int scanCount;
           @property (nonatomic, strong)   NSTimer *timer;
+          @property (nonatomic, strong)   UIWindow *fallbackWindow;
           @property (nonatomic, assign)   BOOL started;
           + (instancetype)shared;
           - (void)start;
@@ -346,6 +393,11 @@ jobs:
                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(no bundle id)",
                     [[UIDevice currentDevice] systemVersion]);
 
+              HBSetDiag(kDiagLoad, [NSString stringWithFormat:@"已注入 %@ · iOS %@ · %@",
+                                    [[NSBundle mainBundle] bundleIdentifier] ?: @"(无 Bundle ID)",
+                                    [[UIDevice currentDevice] systemVersion],
+                                    HBTime()]);
+
               [self refresh];
 
               self.timer = [NSTimer scheduledTimerWithTimeInterval:2.0
@@ -370,22 +422,46 @@ jobs:
               if (wins.count == 0) {
                   @try { if (app.keyWindow) wins = @[app.keyWindow]; } @catch (NSException *e) {}
               }
-              if (wins.count == 0) return;
 
               UIWindow *key = nil;
               for (UIWindow *w in wins) {
                   if ([w isKindOfClass:[UIWindow class]] && w.isKeyWindow) { key = w; break; }
               }
-              if (!key) key = [wins lastObject];
+              if (!key && wins.count) key = [wins lastObject];
 
               NSDictionary *p = HBPrefs();
               gDebug = HBBool(p, kDbgKey, YES);
 
-              if (key) [self attachPrimaryTo:key prefs:p];
+              if (key) {
+                  [self attachPrimaryTo:key prefs:p];
+              } else if (self.scanCount >= 6) {
+                  // 兜底：进程里一个窗口都拿不到时，自建一个透明窗口承载触发层
+                  [self ensureFallbackWindow:p];
+              }
 
-              if (self.scanCount < 4) {
+              if (self.scanCount < 8) {
                   self.scanCount++;
-                  [self scanInWindows:wins keyWindow:key prefs:p];
+                  if (wins.count) [self scanInWindows:wins keyWindow:key prefs:p];
+              }
+          }
+
+          - (void)ensureFallbackWindow:(NSDictionary *)p {
+              if (self.fallbackWindow) {
+                  [self attachPrimaryTo:self.fallbackWindow prefs:p];
+                  return;
+              }
+              @try {
+                  UIWindow *w = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+                  w.backgroundColor        = [UIColor clearColor];
+                  w.userInteractionEnabled = YES;
+                  w.windowLevel            = UIWindowLevelNormal + 10.0;
+                  w.hidden                 = NO;
+                  self.fallbackWindow      = w;
+                  HBLog(@"fallback window created");
+                  HBSetDiag(kDiagOverlay, [NSString stringWithFormat:@"兜底自建窗口 · %@", HBTime()]);
+                  [self attachPrimaryTo:w prefs:p];
+              } @catch (NSException *e) {
+                  HBLog(@"fallback window failed: %@", e);
               }
           }
 
@@ -399,10 +475,12 @@ jobs:
               if (v.window != w) {
                   [v removeFromSuperview];
                   [w addSubview:v];
-                  [w bringSubviewToFront:v];
                   HBLog(@"primary overlay -> window %@ (bounds %@)",
                         NSStringFromClass([w class]), NSStringFromCGRect(w.bounds));
+                  HBSetDiag(kDiagOverlay, [NSString stringWithFormat:@"触发层已挂载 → %@ · %@",
+                                           NSStringFromClass([w class]), HBTime()]);
               }
+              [w bringSubviewToFront:v];
 
               CGFloat h = HBNum(p, kHKey, 44.0);
               h = MAX(20.0, MIN(120.0, h));
@@ -411,6 +489,17 @@ jobs:
 
               v.activeWidth    = HBNum(p, kWKey, 180.0);
               v.captureEnabled = HBBool(p, kOnKey, YES) && !(HBBool(p, kKbKey, YES) && self.keyboardVisible);
+
+              // 调试染色：让触发层肉眼可见，用来判断「到底挂上没有」
+              if (HBBool(p, kTintKey, YES)) {
+                  v.backgroundColor = [[UIColor redColor] colorWithAlphaComponent:0.30];
+                  v.layer.borderWidth = 1.0;
+                  v.layer.borderColor = [UIColor redColor].CGColor;
+              } else {
+                  v.backgroundColor = [UIColor clearColor];
+                  v.layer.borderWidth = 0.0;
+                  v.layer.borderColor = nil;
+              }
 
               [self configure:v prefs:p];
           }
@@ -500,12 +589,18 @@ jobs:
               UIApplication *app = [UIApplication sharedApplication];
               if (!app) return;
 
+              BOOL can = YES;
+              @try { can = [app canOpenURL:url]; } @catch (NSException *e) { can = YES; }
+              if (!can) HBLog(@"warning: canOpenURL=NO for %@ (scheme 可能未注册)", s);
+
+              HBSetDiag(kDiagFire, [NSString stringWithFormat:@"%@ · %@ · canOpen=%@",
+                                    HBTime(), s, can ? @"是" : @"否"]);
+
               @try {
-                  if (![app canOpenURL:url]) {
-                      HBLog(@"warning: canOpenURL=NO for %@ (scheme 可能未注册)", s);
-                  }
                   [app openURL:url options:@{} completionHandler:^(BOOL ok) {
                       HBLog(@"openURL %@ -> success=%d", s, (int)ok);
+                      HBSetDiag(kDiagFire, [NSString stringWithFormat:@"%@ · %@ · 打开%@",
+                                            HBTime(), s, ok ? @"成功" : @"失败"]);
                   }];
               } @catch (NSException *e) {
                   HBLog(@"openURL exception: %@", e);
@@ -524,9 +619,14 @@ jobs:
                                                                    CGRectGetMidY(found.bounds))
                                                toView:w];
                   UIView *hit = [w hitTest:center withEvent:nil];
+                  BOOL reachable = (hit == found || [found isDescendantOfView:hit]);
                   HBLog(@"hitTest(pillCenter) -> %@   (touchesReachable=%d)",
-                        hit ? NSStringFromClass([hit class]) : @"nil",
-                        (int)(hit == found || [found isDescendantOfView:hit]));
+                        hit ? NSStringFromClass([hit class]) : @"nil", (int)reachable);
+
+                  HBSetDiag(kDiagBar, [NSString stringWithFormat:@"%@ @ %@ · 触摸可达=%@",
+                                       NSStringFromClass([found class]),
+                                       NSStringFromClass([w class]),
+                                       reachable ? @"是" : @"否"]);
 
                   if (w != key) {
                       [self attachSecondaryNear:found inWindow:w prefs:p];
@@ -585,20 +685,162 @@ jobs:
           static NSString * const HBID    = @"com.yourname.homebarurl";
           static NSString * const kURLKey = @"targetURL";
 
+          // 读插件写回来的遥测值（走 cfprefsd，跨进程可读）
+          static NSString *HBReadDiag(NSString *key) {
+              CFPreferencesAppSynchronize((__bridge CFStringRef)HBID);
+              id v = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)key,
+                                                                     (__bridge CFStringRef)HBID);
+              if (!v) return @"（无记录）";
+              if ([v isKindOfClass:[NSString class]]) return (NSString *)v;
+              return [NSString stringWithFormat:@"%@", v];
+          }
+
           @interface HomeBarURLPrefsListController : PSListController
           - (void)testOpenURL:(PSSpecifier *)spec;
+          - (PSSpecifier *)hbGroup:(NSString *)label footer:(NSString *)footer;
+          - (PSSpecifier *)hbSwitch:(NSString *)label key:(NSString *)key def:(BOOL)def;
+          - (PSSpecifier *)hbEdit:(NSString *)label key:(NSString *)key def:(NSString *)def ph:(NSString *)ph kb:(int)kb;
+          - (PSSpecifier *)hbList:(NSString *)label key:(NSString *)key def:(int)def;
+          - (PSSpecifier *)hbButton:(NSString *)label action:(NSString *)action;
+          - (void)hbAdd:(NSMutableArray *)a row:(PSSpecifier *)row;
           @end
 
           @implementation HomeBarURLPrefsListController
 
+          // ---- 逐行构造，每行都先确认 cell 类存在，缺失就跳过，绝不让整页崩掉 ----
+
+          - (void)hbAdd:(NSMutableArray *)a row:(PSSpecifier *)row {
+              if (row) { [a addObject:row]; }
+              else { NSLog(@"[HomeBarURL] skipped an unsupported row"); }
+          }
+
+          - (PSSpecifier *)hbGroup:(NSString *)label footer:(NSString *)footer {
+              PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:label
+                                                              target:self set:NULL get:NULL
+                                                              detail:Nil cell:PSGroupCell edit:Nil];
+              if (footer.length) [s setProperty:footer forKey:@"footerText"];
+              return s;
+          }
+
+          - (PSSpecifier *)hbSwitch:(NSString *)label key:(NSString *)key def:(BOOL)def {
+              if (!NSClassFromString(@"PSSwitchCell")) return nil;
+              PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:label target:self
+                                     set:@selector(setPreferenceValue:specifier:)
+                                     get:@selector(readPreferenceValue:)
+                                   detail:Nil cell:PSSwitchCell edit:Nil];
+              [s setProperty:HBID forKey:@"defaults"];
+              [s setProperty:key forKey:@"key"];
+              [s setProperty:[NSNumber numberWithBool:def] forKey:@"default"];
+              return s;
+          }
+
+          - (PSSpecifier *)hbEdit:(NSString *)label key:(NSString *)key def:(NSString *)def ph:(NSString *)ph kb:(int)kb {
+              if (!NSClassFromString(@"PSEditTextCell")) return nil;
+              PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:label target:self
+                                     set:@selector(setPreferenceValue:specifier:)
+                                     get:@selector(readPreferenceValue:)
+                                   detail:Nil cell:PSEditTextCell edit:Nil];
+              [s setProperty:HBID forKey:@"defaults"];
+              [s setProperty:key forKey:@"key"];
+              [s setProperty:def forKey:@"default"];
+              [s setProperty:ph forKey:@"placeholder"];
+              [s setProperty:[NSNumber numberWithInt:kb] forKey:@"keyboardType"];
+              [s setProperty:[NSNumber numberWithInt:0] forKey:@"autocapitalizationType"];
+              [s setProperty:[NSNumber numberWithInt:0] forKey:@"autocorrectionType"];
+              return s;
+          }
+
+          - (PSSpecifier *)hbList:(NSString *)label key:(NSString *)key def:(int)def {
+              if (!NSClassFromString(@"PSLinkListCell")) return nil;
+              if (!NSClassFromString(@"PSListItemsController")) return nil;
+              PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:label target:self
+                                     set:@selector(setPreferenceValue:specifier:)
+                                     get:@selector(readPreferenceValue:)
+                                   detail:NSClassFromString(@"PSListItemsController")
+                                     cell:PSLinkListCell edit:Nil];
+              [s setProperty:HBID forKey:@"defaults"];
+              [s setProperty:key forKey:@"key"];
+              [s setProperty:[NSNumber numberWithInt:def] forKey:@"default"];
+              [s setProperty:@[[NSNumber numberWithInt:0],
+                               [NSNumber numberWithInt:1],
+                               [NSNumber numberWithInt:2]] forKey:@"validValues"];
+              [s setProperty:@[@"单击", @"双击", @"长按 0.35 秒"] forKey:@"validTitles"];
+              return s;
+          }
+
+          - (PSSpecifier *)hbButton:(NSString *)label action:(NSString *)action {
+              if (!NSClassFromString(@"PSButtonCell")) return nil;
+              PSSpecifier *s = [PSSpecifier preferenceSpecifierNamed:label
+                                                              target:self set:NULL get:NULL
+                                                              detail:Nil cell:PSButtonCell edit:Nil];
+              [s setProperty:action forKey:@"action"];
+              return s;
+          }
+
           - (NSArray *)specifiers {
-              NSArray *list = nil;
+              NSMutableArray *a = [NSMutableArray array];
+
               @try {
-                  list = [self loadSpecifiersFromPlistName:@"Root" target:self];
+                  [a addObject:[self hbGroup:@"开关" footer:nil]];
+                  [self hbAdd:a row:[self hbSwitch:@"启用" key:@"enabled" def:YES]];
+
+                  [a addObject:[self hbGroup:@"目标"
+                                     footer:@"填写完整 URL / Scheme，必须带协议头。保存后立即生效，无需注销。"]];
+                  [self hbAdd:a row:[self hbEdit:@"网址" key:@"targetURL"
+                                             def:@"taplink://trigger/DA426593-2DD3-4759-B23A-3ADB84B46213"
+                                              ph:@"https:// 或 scheme://" kb:3]];
+
+                  [a addObject:[self hbGroup:@"触发方式" footer:nil]];
+                  [self hbAdd:a row:[self hbList:@"手势" key:@"activation" def:0]];
+
+                  [a addObject:[self hbGroup:@"触发区域"
+                                     footer:@"以屏幕底部居中计算。宽度填 0 = 整条底边。默认 180 × 44pt。"]];
+                  [self hbAdd:a row:[self hbEdit:@"宽度" key:@"triggerWidth" def:@"180" ph:@"180（0=全宽）" kb:4]];
+                  [self hbAdd:a row:[self hbEdit:@"高度" key:@"triggerHeight" def:@"44" ph:@"44" kb:4]];
+
+                  [a addObject:[self hbGroup:@"细节" footer:nil]];
+                  [self hbAdd:a row:[self hbSwitch:@"键盘弹出时禁用" key:@"disableWithKeyboard" def:YES]];
+                  [self hbAdd:a row:[self hbSwitch:@"触发时震动反馈" key:@"haptic" def:YES]];
+                  [self hbAdd:a row:[self hbSwitch:@"调试日志" key:@"debugEnabled" def:YES]];
+                  [self hbAdd:a row:[self hbSwitch:@"显示触发区域（红色）" key:@"debugOverlay" def:YES]];
+
+                  [a addObject:[self hbGroup:@"测试" footer:nil]];
+                  [self hbAdd:a row:[self hbButton:@"立即测试打开" action:@"testOpenURL:"]];
+
+                  NSString *diag = [NSString stringWithFormat:
+                      @"注入状态：%@\n"
+                      @"触发层　：%@\n"
+                      @"小白条　：%@\n"
+                      @"最近触发：%@\n\n"
+                      @"「注入状态」显示（无记录）= dylib 未被注入；"
+                      @"「触发层」显示（无记录）= 已注入但没拿到窗口。",
+                      HBReadDiag(@"diagLoad"), HBReadDiag(@"diagOverlay"),
+                      HBReadDiag(@"diagHomeBar"), HBReadDiag(@"diagFire")];
+                  [a addObject:[self hbGroup:@"诊断" footer:diag]];
               } @catch (NSException *e) {
-                  list = nil;
+                  NSLog(@"[HomeBarURL] specifier build error: %@", e);
               }
-              return list ?: @[];
+
+              NSMutableArray *out = [NSMutableArray array];
+              for (id o in a) { if (o) [out addObject:o]; }
+
+              if (out.count == 0) {
+                  @try {
+                      NSArray *fromPlist = [self loadSpecifiersFromPlistName:@"Root" target:self];
+                      if (fromPlist.count) return fromPlist;
+                  } @catch (NSException *e) {}
+                  return @[[self hbGroup:@"HomeBarURL" footer:@"界面构造失败，但插件本体可能仍在工作。"]];
+              }
+
+              return out;
+          }
+
+          - (void)viewWillAppear:(BOOL)animated {
+              [super viewWillAppear:animated];
+              @try {
+                  SEL s = NSSelectorFromString(@"reloadSpecifiers");
+                  if ([self respondsToSelector:s]) [self performSelector:s];
+              } @catch (NSException *e) {}
           }
 
           // 保证写入的是「系统级」偏好域 /var/mobile/Library/Preferences/<HBID>.plist，
@@ -621,10 +863,13 @@ jobs:
               if (v) return v;
 
               NSString *key = [spec propertyForKey:@"key"];
-              if (!key) return nil;
-              CFPreferencesAppSynchronize((__bridge CFStringRef)HBID);
-              return (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)key,
+              if (key) {
+                  CFPreferencesAppSynchronize((__bridge CFStringRef)HBID);
+                  v = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)key,
                                                                      (__bridge CFStringRef)HBID);
+              }
+              // 兜底：返回 specifier 上声明的默认值，避免开关显示为关
+              return v ?: [spec propertyForKey:@"default"];
           }
 
           - (void)testOpenURL:(PSSpecifier *)spec {
@@ -855,9 +1100,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>1.3.0</string>
+              <string>1.4.0</string>
               <key>CFBundleVersion</key>
-              <string>1.3.0</string>
+              <string>1.4.0</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
