@@ -27,8 +27,12 @@ jobs:
             libssl-dev \
             curl \
             git \
-            xz-utils \
-            ldid
+            xz-utils
+
+      - name: 安装 ldid 签名工具
+        run: |
+          sudo curl -fL "https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5/ldid_linux_x86_64" -o /usr/local/bin/ldid
+          sudo chmod +x /usr/local/bin/ldid
 
       - name: 安装官方最新 Theos（原生支持 RootHide）
         run: |
@@ -38,7 +42,7 @@ jobs:
       - name: 下载 iOS 16.4 SDK
         run: |
           mkdir -p $THEOS/sdks
-          curl -fL "https://github.com/theos/sdks/releases/download/2024-09/iPhoneOS16.4.sdk.tar.xz" -o $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz
+          curl -fL "https://github.com/xybp888/iOS-SDKs/releases/download/iOS-SDKs/iPhoneOS16.4.sdk.tar.xz" -o $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz
           tar -xf $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz -C $THEOS/sdks/
           rm $THEOS/sdks/iPhoneOS16.4.sdk.tar.xz
 
