@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 2.0.4
+          Version: 2.1.0
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -129,8 +129,14 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 2.0.4
+           * HomeBarURL 2.1.0
            *
+           * 2.1.0：新增「长按网址」targetURLHold —— 长按小白条触发**另一个** scheme/URL。
+           * 手势选「单击 / 双击」时，若填了长按网址则额外挂一个长按识别器，两者互斥
+           *   （长按成立则单击作废，不会一次按压触发两个 scheme）。
+           *   手势选「长按」时行为完全不变，仍触发上面的网址。长按网址留空 = 不启用。
+           *   关键修复：modeTag 原先只记录手势模式，改完长按网址手势不会重建，
+           *   现已把「是否填了长按网址」并入重建判据。
            * 2.0.4：填充与边框透明度各新增 0.1%（0.001）一档，位于 0.01% 与 1% 之间。
            *   **关键修复：2.0.3 漏了 bump 版本号**，包版本与 BUILD STAMP 都仍是 2.0.3。
            *   APT 见到「同版本已安装」就不会替换 dylib —— 于是设置面板是新的（能看到新档位），
@@ -165,6 +171,7 @@ jobs:
 
           static NSString * const HBID     = @"com.yourname.homebarurl";
           static NSString * const kURLKey  = @"targetURL";
+          static NSString * const kURLHoldKey = @"targetURLHold"; // 长按专用；留空=长按仍走 kURLKey
           static NSString * const kOnKey   = @"enabled";
           static NSString * const kActKey  = @"activation";   // 0=单击 1=双击 2=长按
           static NSString * const kWKey    = @"triggerWidth";   // 触发区宽(pt)，0=跟随底部安全区
@@ -187,7 +194,7 @@ jobs:
 
           // 唯一权威来源：新增任何偏好键都必须加到这里，否则永远读不到（会静默回落默认值）
           static NSArray *HBPrefKeys(void) {
-              return @[kURLKey, kOnKey, kActKey, kWKey, kHKey, kDyKey,
+              return @[kURLKey, kURLHoldKey, kOnKey, kActKey, kWKey, kHKey, kDyKey,
                        kOvKey, kClKey, kOpKey, kOpBKey, kDbgKey, kKbKey, kHapKey];
           }
 
@@ -428,7 +435,7 @@ jobs:
 
           /* ---------------- 管理器 ---------------- */
 
-          @interface HBManager : NSObject
+          @interface HBManager : NSObject <UIGestureRecognizerDelegate>
           @property (nonatomic, assign)   BOOL keyboardVisible;
           @property (nonatomic, strong)   NSTimer *timer;
           @property (nonatomic, strong)   HBPassWindow *passWindow;   // 唯一的触发层，全局只有一层
@@ -441,6 +448,10 @@ jobs:
           - (void)refresh;
           - (CGRect)triggerRectForBounds:(CGRect)bounds prefs:(NSDictionary *)p;
           - (void)applyTint:(NSDictionary *)p;
+          - (void)configure:(HBTriggerView *)v prefs:(NSDictionary *)p;
+          - (void)hbFire:(UIGestureRecognizer *)g;
+          - (void)hbFireHold:(UIGestureRecognizer *)g;
+          - (void)openURLString:(NSString *)s tag:(NSString *)tag;
           @end
 
           @implementation HBManager
@@ -477,7 +488,7 @@ jobs:
                     [[UIDevice currentDevice] systemVersion]);
 
               // 构建标记：一眼确认真机上跑的到底是哪个版本（防止装到旧包却以为改了没生效）
-              HBLog(@"[BUILD STAMP] HomeBarURL 2.0.4 | springboard-only | keys=%@", HBPrefKeys());
+              HBLog(@"[BUILD STAMP] HomeBarURL 2.1.0 | springboard-only | keys=%@", HBPrefKeys());
 
               HBSetDiag(kDiagLoad, [NSString stringWithFormat:@"已注入 %@ · iOS %@ · %@",
                                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(无 Bundle ID)",
@@ -678,8 +689,11 @@ jobs:
           - (void)configure:(HBTriggerView *)v prefs:(NSDictionary *)p {
               NSInteger mode = (NSInteger)HBNum(p, kActKey, 0.0);
               if (mode < 0 || mode > 2) mode = 0;
-              if (v.modeTag == mode) return;
-              v.modeTag = mode;
+              // 触发方式或长按网址任一变化都要重建手势，
+              // 否则用户填完长按网址离开设置回来，手势仍是旧的（早退会跳过重建）。
+              NSInteger tag = mode * 2 + ([HBStr(p, kURLHoldKey, @"") length] > 0 ? 1 : 0);
+              if (v.modeTag == tag) return;
+              v.modeTag = tag;
 
               for (UIGestureRecognizer *g in [v.gestureRecognizers copy]) {
                   [v removeGestureRecognizer:g];
@@ -699,7 +713,31 @@ jobs:
                   tap.numberOfTouchesRequired = 1;
                   tap.cancelsTouchesInView    = YES;
                   [v addGestureRecognizer:tap];
+
+                  // 单击/双击模式下额外挂长按：填了「长按网址」才挂，
+                  // 让长按走独立 URL；没填则完全不挂，用户感觉不到长按被吃掉。
+                  if ([HBStr(HBPrefs(), kURLHoldKey, @"") length] > 0) {
+                      UILongPressGestureRecognizer *lp =
+                          [[UILongPressGestureRecognizer alloc] initWithTarget:self
+                                                                          action:@selector(hbFireHold:)];
+                      lp.minimumPressDuration = 0.35;
+                      lp.allowableMovement    = 24.0;
+                      lp.cancelsTouchesInView = YES;
+                      // 长按一旦成立，单击必须作废，否则松手时会再触发一次单击 URL
+                      lp.delegate = (id<UIGestureRecognizerDelegate>)self;
+                      [v addGestureRecognizer:lp];
+                  }
               }
+          }
+
+          // 单击 与 长按 互斥：长按先成立，则要求单击等它失败
+          - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gr
+                  shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)other {
+              if ([gr isKindOfClass:[UITapGestureRecognizer class]] &&
+                  [other isKindOfClass:[UILongPressGestureRecognizer class]]) {
+                  return YES;
+              }
+              return NO;
           }
 
           - (void)hbFire:(UIGestureRecognizer *)g {
@@ -722,13 +760,43 @@ jobs:
               }
 
               NSString *s = HBStr(p, kURLKey, kDefaultURL);
-              NSURL *url = [NSURL URLWithString:s];
-              if (!url) {
-                  HBLog(@"invalid URL string: %@", s);
+              [self openURLString:s tag:@"tap"];
+          }
+
+          // 长按专用 URL：与单击/双击互斥，避免同一次按压触发两个 scheme
+          - (void)hbFireHold:(UIGestureRecognizer *)g {
+              if (g.state != UIGestureRecognizerStateBegan) return;
+
+              NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+              if (gLastFire && (now - [gLastFire timeIntervalSince1970]) < 0.4) return;
+              gLastFire = [NSDate date];
+
+              NSDictionary *p = HBPrefs();
+              gDebug = HBBool(p, kDbgKey, YES);
+
+              if (!HBBool(p, kOnKey, YES)) {
+                  HBLog(@"long-press ignored (tweak disabled)");
                   return;
               }
 
-              HBLog(@"FIRE -> %@", s);
+              NSString *s = HBStr(p, kURLHoldKey, @"");
+              if ([s length] == 0) {
+                  HBLog(@"long-press ignored (targetURLHold 为空)");
+                  return;
+              }
+
+              [self openURLString:s tag:@"hold"];
+          }
+
+          // 打开 URL 的公共实现：校验、触感、日志、canOpenURL、openURL
+          - (void)openURLString:(NSString *)s tag:(NSString *)tag {
+              NSURL *url = [NSURL URLWithString:s];
+              if (!url) {
+                  HBLog(@"invalid %@ URL string: %@", tag, s);
+                  return;
+              }
+
+              HBLog(@"FIRE[%@] -> %@", tag, s);
 
               if (HBBool(p, kHapKey, YES) && NSClassFromString(@"UIImpactFeedbackGenerator")) {
                   @try {
@@ -914,8 +982,13 @@ jobs:
                   [self hbAdd:a row:[self hbEdit:@"网址" key:@"targetURL"
                                              def:@"taplink://trigger/DA426593-2DD3-4759-B23A-3ADB84B46213"
                                               ph:@"https:// 或 scheme://" kb:3]];
+                  // 长按专用网址：留空则不启用，长按行为完全不变
+                  [self hbAdd:a row:[self hbEdit:@"长按网址" key:@"targetURLHold"
+                                             def:@"" ph:@"留空 = 不启用；否则长按此 scheme"
+                                              kb:3]];
 
-                  [a addObject:[self hbGroup:@"触发方式" footer:nil]];
+                  [a addObject:[self hbGroup:@"触发方式"
+                                     footer:@"选「单击 / 双击」时长按走独立网址；选「长按」时长按仍触发上面的网址。"]];
                   [self hbAdd:a row:[self hbList:@"手势" key:@"activation" def:0]];
 
                   [a addObject:[self hbGroup:@"触发区域"
@@ -1070,6 +1143,22 @@ jobs:
                       <key>autocorrectionType</key>
                       <integer>0</integer>
                   </dict>
+                      <dict>
+                          <key>cell</key>
+                          <string>PSEditTextCell</string>
+                          <key>label</key>
+                          <string>长按网址</string>
+                          <key>key</key>
+                          <string>targetURLHold</string>
+                          <key>defaults</key>
+                          <string>com.yourname.homebarurl</string>
+                          <key>default</key>
+                          <string></string>
+                          <key>placeholder</key>
+                          <string>留空 = 不启用；否则长按此 scheme</string>
+                          <key>keyboardType</key>
+                          <integer>3</integer>
+                      </dict>
 
                   <dict>
                       <key>cell</key>
@@ -1391,9 +1480,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>2.0.4</string>
+              <string>2.1.0</string>
               <key>CFBundleVersion</key>
-              <string>2.0.4</string>
+              <string>2.1.0</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
@@ -1466,6 +1555,22 @@ jobs:
                       <key>autocorrectionType</key>
                       <integer>0</integer>
                   </dict>
+                      <dict>
+                          <key>cell</key>
+                          <string>PSEditTextCell</string>
+                          <key>label</key>
+                          <string>长按网址</string>
+                          <key>key</key>
+                          <string>targetURLHold</string>
+                          <key>defaults</key>
+                          <string>com.yourname.homebarurl</string>
+                          <key>default</key>
+                          <string></string>
+                          <key>placeholder</key>
+                          <string>留空 = 不启用；否则长按此 scheme</string>
+                          <key>keyboardType</key>
+                          <integer>3</integer>
+                      </dict>
 
                   <dict>
                       <key>cell</key>
