@@ -92,7 +92,7 @@ jobs:
           cat > control <<'EOF_CONTROL'
           Package: com.yourname.homebarurl
           Name: HomeBarURL
-          Version: 2.1.0
+          Version: 2.1.1
           Architecture: iphoneos-arm64e
           Description: Tap the home indicator anywhere to open a configurable URL. Configure it in Settings.
           Maintainer: qweasdhxy
@@ -129,8 +129,13 @@ jobs:
           #import <objc/runtime.h>
 
           /*
-           * HomeBarURL 2.1.0
+           * HomeBarURL 2.1.1
            *
+           * 2.1.1：修复编译失败。2.1.0 把打开 URL 的逻辑抽成 openURLString:tag: 时，
+           *   方法体沿用了原 hbFire: 的局部变量 p，而 p 属于 hbFire: 的作用域、
+           *   不覆盖新方法 —— 编译报 p undeclared identifier。
+           *   修复：新方法内自行 NSDictionary *p = HBPrefs();
+           *   教训：抽方法必须逐个核对被搬走代码引用的局部变量。
            * 2.1.0：新增「长按网址」targetURLHold —— 长按小白条触发**另一个** scheme/URL。
            * 手势选「单击 / 双击」时，若填了长按网址则额外挂一个长按识别器，两者互斥
            *   （长按成立则单击作废，不会一次按压触发两个 scheme）。
@@ -488,7 +493,7 @@ jobs:
                     [[UIDevice currentDevice] systemVersion]);
 
               // 构建标记：一眼确认真机上跑的到底是哪个版本（防止装到旧包却以为改了没生效）
-              HBLog(@"[BUILD STAMP] HomeBarURL 2.1.0 | springboard-only | keys=%@", HBPrefKeys());
+              HBLog(@"[BUILD STAMP] HomeBarURL 2.1.1 | springboard-only | keys=%@", HBPrefKeys());
 
               HBSetDiag(kDiagLoad, [NSString stringWithFormat:@"已注入 %@ · iOS %@ · %@",
                                     [[NSBundle mainBundle] bundleIdentifier] ?: @"(无 Bundle ID)",
@@ -790,6 +795,7 @@ jobs:
 
           // 打开 URL 的公共实现：校验、触感、日志、canOpenURL、openURL
           - (void)openURLString:(NSString *)s tag:(NSString *)tag {
+              NSDictionary *p = HBPrefs();   // 本方法独立自取，不能依赖调用方的局部变量
               NSURL *url = [NSURL URLWithString:s];
               if (!url) {
                   HBLog(@"invalid %@ URL string: %@", tag, s);
@@ -1480,9 +1486,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>BNDL</string>
               <key>CFBundleShortVersionString</key>
-              <string>2.1.0</string>
+              <string>2.1.1</string>
               <key>CFBundleVersion</key>
-              <string>2.1.0</string>
+              <string>2.1.1</string>
               <key>NSPrincipalClass</key>
               <string>HomeBarURLPrefsListController</string>
           </dict>
