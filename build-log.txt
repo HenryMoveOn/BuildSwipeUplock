@@ -1,5 +1,5 @@
 ===== META =====
-run=66 sha=65afc8dbf2599d5d9d34160c43930c77a5d901e6 build_outcome=success
+run=67 sha=32ea5b7df6301360d0c89e91a88c84054846e9b4 build_outcome=failure
 
 ===== MAKE VERSION =====
 GNU Make 4.4.1
@@ -20,28 +20,10 @@ to your PATH from your bashrc like:
     PATH="/opt/homebrew/opt/make/libexec/gnubin:$PATH"
 
 ===== DEB PRODUCED? =====
-total 88
-drwxr-xr-x  3 runner  staff     96 Oct  9 23:38 .
-drwxr-xr-x  9 runner  staff    288 Oct  9 23:38 ..
--rw-r--r--  1 runner  staff  43106 Oct  9 23:38 com.yourname.homebarurl_2.0.4_iphoneos-arm64e.deb
 
 ===== DEB CONTENTS (files actually inside .deb) =====
->> HomeBarURL/packages/com.yourname.homebarurl_2.0.4_iphoneos-arm64e.deb
 
 ===== KEY FILES IN BUILD TREE =====
-  HomeBarURL/.theos/obj/HomeBarURLPrefs.bundle
-  HomeBarURL/.theos/obj/HomeBarURLPrefs.bundle/Root.plist
-  HomeBarURL/.theos/obj/arm64e/HomeBarURLPrefs.bundle
-  HomeBarURL/.theos/obj/arm64/HomeBarURLPrefs.bundle
-  HomeBarURL/.theos/_/Library/PreferenceLoader/Preferences/HomeBarURL.png
-  HomeBarURL/.theos/_/Library/PreferenceLoader/Preferences/HomeBarURL@3x.png
-  HomeBarURL/.theos/_/Library/PreferenceLoader/Preferences/HomeBarURL@2x.png
-  HomeBarURL/.theos/_/Library/PreferenceLoader/Preferences/HomeBarURLPrefs.plist
-  HomeBarURL/.theos/_/Library/PreferenceBundles/HomeBarURLPrefs.bundle
-  HomeBarURL/.theos/_/Library/PreferenceBundles/HomeBarURLPrefs.bundle/HomeBarURL.png
-  HomeBarURL/.theos/_/Library/PreferenceBundles/HomeBarURLPrefs.bundle/HomeBarURL@3x.png
-  HomeBarURL/.theos/_/Library/PreferenceBundles/HomeBarURLPrefs.bundle/HomeBarURL@2x.png
-  HomeBarURL/.theos/_/Library/PreferenceBundles/HomeBarURLPrefs.bundle/Root.plist
   HomeBarURL/HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL.png
   HomeBarURL/HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL@3x.png
   HomeBarURL/HomeBarURLPrefs/layout/Library/PreferenceLoader/Preferences/HomeBarURL@2x.png
@@ -73,7 +55,7 @@ x AppleTVOS12.4.sdk/usr/lib/libafc.tbd
 x AppleTVOS12.4.sdk/usr/lib/libcharset.1.tbd
 x AppleTVOS12.4.sdk/usr/lib/fdrtrustobject
 x AppleTVOS12.4.sdk/usr/lib/libncurses.tbd
-x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  3238k      0  0:00:01  0:00:01 --:--:-- 3826k
+x AppleTVOS12.4.sdk/usr/lib/libLLVM.tbd100 5693k  100 5693k    0     0  3585k      0  0:00:01  0:00:01 --:--:-- 4149k
 
 x AppleTVOS12.4.sdk/usr/lib/libiconv.tbd
 x AppleTVOS12.4.sdk/usr/lib/liblzma.tbd
@@ -106,9 +88,9 @@ x AppleTVOS12.4.sdk/Entitlements.plist
 install-theos rc=0
 === sdks ===
 total 0
-drwxr-xr-x   5 runner  staff  160 Oct  9 23:37 .
-drwxr-xr-x  22 runner  staff  704 Oct  9 23:37 ..
--rw-r--r--   1 runner  staff    0 Oct  9 23:37 .keep
+drwxr-xr-x   5 runner  staff  160 Oct 10 05:15 .
+drwxr-xr-x  22 runner  staff  704 Oct 10 05:15 ..
+-rw-r--r--   1 runner  staff    0 Oct 10 05:15 .keep
 drwxr-xr-x   6 runner  staff  192 Nov 23  2023 AppleTVOS12.4.sdk
 drwxr-xr-x   8 runner  staff  256 Nov 23  2023 iPhoneOS16.5.sdk
 === toolchain ===
@@ -125,43 +107,12 @@ Target: arm64-apple-darwin25.6.0
 [1;31m> [1;3;39mMaking all for tweak HomeBarURL…[m
 [0;31m==> [1;39mPreprocessing Tweak.xm…[m
 [0;32m==> [1;39mCompiling Tweak.xm (arm64e)…[m
-[0;33m==> [1;39mLinking tweak HomeBarURL (arm64e)…[m
-ld: warning: -multiply_defined is obsolete
-[0;34m==> [1;39mGenerating debug symbols for HomeBarURL…[m
-[0;34m==> [1;39mStripping HomeBarURL (arm64e)…[m
-[0;34m==> [1;39mSigning HomeBarURL…[m
-[1;31m> [1;3;39mMaking all in HomeBarURLPrefs…[m
-[1;31m> [1;3;39mMaking all for bundle HomeBarURLPrefs…[m
-[0;35m==> [1;39mCopying resource directories into the bundle wrapper…[m
-[0;32m==> [1;39mCompiling HomeBarURLPrefs.m (arm64e)…[m
-[1mHomeBarURLPrefs.m:162:48: [0m[0;1;35mwarning: [0m[1mperformSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks][0m
-  162 |         if ([self respondsToSelector:s]) [self performSelector:s];[0m
-      | [0;1;32m                                               ^
-[0m[1mHomeBarURLPrefs.m:162:64: [0m[0;1;36mnote: [0mused here[0m
-  162 |         if ([self respondsToSelector:s]) [self performSelector:s];[0m
-      | [0;1;32m                                                               ^
-[0m1 warning generated.
-[0;32m==> [1;39mCompiling HomeBarURLPrefs.m (arm64)…[m
-[1mHomeBarURLPrefs.m:162:48: [0m[0;1;35mwarning: [0m[1mperformSelector may cause a leak because its selector is unknown [-Warc-performSelector-leaks][0m
-  162 |         if ([self respondsToSelector:s]) [self performSelector:s];[0m
-      | [0;1;32m                                               ^
-[0m[1mHomeBarURLPrefs.m:162:64: [0m[0;1;36mnote: [0mused here[0m
-  162 |         if ([self respondsToSelector:s]) [self performSelector:s];[0m
-      | [0;1;32m                                                               ^
-[0m1 warning generated.
-[0;33m==> [1;39mLinking bundle HomeBarURLPrefs (arm64)…[m
-ld: warning: -multiply_defined is obsolete
-[0;34m==> [1;39mGenerating debug symbols for HomeBarURLPrefs…[m
-[0;34m==> [1;39mStripping HomeBarURLPrefs (arm64)…[m
-[0;33m==> [1;39mLinking bundle HomeBarURLPrefs (arm64e)…[m
-ld: warning: -multiply_defined is obsolete
-[0;34m==> [1;39mGenerating debug symbols for HomeBarURLPrefs…[m
-[0;34m==> [1;39mStripping HomeBarURLPrefs (arm64e)…[m
-[0;34m==> [1;39mMerging bundle HomeBarURLPrefs…[m
-[0;34m==> [1;39mSigning HomeBarURLPrefs…[m
-[1;31m> [1;3;39mMaking stage for tweak HomeBarURL…[m
-[1;31m> [1;3;39mMaking stage in HomeBarURLPrefs…[m
-[1;31m> [1;3;39mMaking stage for bundle HomeBarURLPrefs…[m
-od: stdout: Broken pipe
-od: stdout: Broken pipe
-dm.pl: building package `com.yourname.homebarurl:iphoneos-arm64e' in `./packages/com.yourname.homebarurl_2.0.4_iphoneos-arm64e.deb'
+[1mTweak.xm:675:16: [0m[0;1;31merror: [0m[1muse of undeclared identifier 'p'[0m
+  675 |     if (HBBool(p, kHapKey, YES) && NSClassFromString(@"UIImpactFeedbackGenerator")) {[0m
+      | [0;1;32m               ^
+[0m1 error generated.
+gmake[3]: *** [/Users/runner/theos/makefiles/instance/rules.mk:420: /Users/runner/work/BuildSwipeUplock/BuildSwipeUplock/HomeBarURL/.theos/obj/arm64e/Tweak.xm.aea7caf6.o] Error 1
+rm /Users/runner/work/BuildSwipeUplock/BuildSwipeUplock/HomeBarURL/.theos/obj/arm64e/Tweak.xm.mm
+gmake[2]: *** [/Users/runner/theos/makefiles/instance/library.mk:52: /Users/runner/work/BuildSwipeUplock/BuildSwipeUplock/HomeBarURL/.theos/obj/arm64e/HomeBarURL.dylib] Error 2
+gmake[1]: *** [/Users/runner/theos/makefiles/instance/library.mk:37: internal-library-all_] Error 2
+gmake: *** [/Users/runner/theos/makefiles/master/rules.mk:146: HomeBarURL.all.tweak.variables] Error 2
